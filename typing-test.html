@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>타자 검정 - Typing Test</title>
+    <link rel="stylesheet" href="typing-test.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 게임 제목 -->
+        <header>
+            <h1>타자 검정</h1>
+            <p class="subtitle">Typing Test</p>
+        </header>
+
+        <!-- 게임 상태 표시 영역 -->
+        <div class="stats-panel">
+            <div class="stat-item">
+                <div class="stat-label">남은 시간</div>
+                <div class="stat-value" id="timeDisplay">60초</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">점수</div>
+                <div class="stat-value" id="scoreDisplay">0점</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">정확도</div>
+                <div class="stat-value" id="accuracyDisplay">0%</div>
+            </div>
+        </div>
+
+        <!-- 문장 진행 상황 -->
+        <div class="progress-info">
+            <span id="sentenceProgress">문장 0 / 15</span>
+        </div>
+
+        <!-- 문장 표시 영역 -->
+        <div class="sentence-container">
+            <div class="sentence-display" id="sentenceDisplay">
+                게임을 시작하려면 "시작" 버튼을 누르세요.
+            </div>
+        </div>
+
+        <!-- 사용자 입력 영역 -->
+        <div class="input-container">
+            <input 
+                type="text" 
+                id="userInput" 
+                class="user-input" 
+                placeholder="여기에 입력하세요..."
+                disabled
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+            >
+        </div>
+
+        <!-- 진행 상황 표시 -->
+        <div class="progress-container">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">입력 진행: 0 / 0</div>
+        </div>
+
+        <!-- 버튼 영역 -->
+        <div class="button-container">
+            <button id="startBtn" class="btn btn-primary">시작</button>
+            <button id="resetBtn" class="btn btn-secondary" disabled>다시하기</button>
+        </div>
+
+        <!-- 결과 화면 (게임 종료 시 표시) -->
+        <div class="result-modal" id="resultModal">
+            <div class="modal-content">
+                <h2>게임 종료!</h2>
+                <div class="result-stats">
+                    <div class="result-item">
+                        <span class="result-label">최종 점수:</span>
+                        <span class="result-value" id="finalScore">0점</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">정확도:</span>
+                        <span class="result-value" id="finalAccuracy">0%</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">입력한 글자:</span>
+                        <span class="result-value" id="finalChars">0자</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">오타:</span>
+                        <span class="result-value" id="finalMistakes">0회</span>
+                    </div>
+                </div>
+                <button id="closeModalBtn" class="btn btn-primary">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="typing-test.js"></script>
+</body>
+</html>
