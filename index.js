@@ -255,10 +255,12 @@ async function renderRequests(root) {
         }
         list.innerHTML = data.map(renderRequestItem).join('');
         document.querySelectorAll('[data-action="review"]').forEach((btn) => btn.addEventListener('click', onClickReview));
+        document.querySelectorAll('[data-action="delete"]').forEach((btn) => btn.addEventListener('click', onClickDelete));
     }
 
     function renderRequestItem(item) {
         const rating = item.avg_rating ? Number(item.avg_rating).toFixed(1) : '-';
+        const isOwner = !!state.session && state.session.user.id === item.owner_user_id;
         return `
       <div class="list-item">
         <div>
@@ -271,6 +273,7 @@ async function renderRequests(root) {
         </div>
         <div class="row">
           <button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>
+          ${isOwner ? `<button class="btn" data-action="delete" data-id="${item.id}">삭제</button>` : ''}
         </div>
       </div>
     `;
@@ -283,6 +286,28 @@ async function renderRequests(root) {
         }
         const reviewedUserId = e.currentTarget.getAttribute('data-user-id');
         openReviewDialog(reviewedUserId);
+    }
+
+    async function onClickDelete(e) {
+        if (!state.session) {
+            alert('로그인이 필요합니다');
+            return;
+        }
+        const id = e.currentTarget.getAttribute('data-id');
+        if (!id) return;
+        if (!confirm('정말 삭제하시겠습니까?')) return;
+        const { error } = await state.supabase
+            .from('requests')
+            .delete()
+            .eq('id', id)
+            .eq('owner_user_id', state.session.user.id)
+            .select('id');
+        if (error) {
+            alert('삭제 실패: ' + error.message);
+            return;
+        }
+        // 오류 없으면 성공으로 간주하고 목록 새로고침
+        await loadRequests();
     }
 }
 
