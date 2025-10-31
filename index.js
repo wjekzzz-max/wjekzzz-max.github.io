@@ -34,6 +34,7 @@ function setupAuthUI() {
     const authForm = document.getElementById('authForm');
     const authTitle = document.getElementById('authTitle');
     const authSubmit = document.getElementById('authSubmit');
+    const authPassword2Input = document.getElementById('authPassword2');
 
     let isSignup = false;
 
@@ -72,16 +73,42 @@ function setupAuthUI() {
         e.preventDefault();
         const email = document.getElementById('authEmail').value.trim();
         const password = document.getElementById('authPassword').value;
+        const password2 = authPassword2Input.value;
         if (!email || !password) return;
+        // 회원가입일 때는 반드시 비밀번호 확인 일치 필요
+        if (isSignup) {
+            if (!password2) { alert('비밀번호 확인을 입력하세요.'); return; }
+            if (password !== password2) { alert('비밀번호가 일치하지 않습니다.'); return; }
+        } else {
+            // 로그인일 때 비밀번호 확인이 입력되어 있으면 일치 검증, 비어있으면 무시
+            if (password2 && password !== password2) { alert('비밀번호가 일치하지 않습니다.'); return; }
+        }
         try {
             if (isSignup) {
-                const { error } = await state.supabase.auth.signUp({ email, password });
-                if (error) throw error;
-                alert('회원가입 완료. 로그인 해주세요.');
-                isSignup = false;
-                authTitle.textContent = '로그인';
-                authSubmit.textContent = '로그인';
-                toggleAuthMode.textContent = '회원가입';
+                const { data: signUpData, error: signUpError } = await state.supabase.auth.signUp({ email, password });
+                if (signUpError) throw signUpError;
+                // 일부 설정에서는 즉시 세션이 생기지 않고 이메일 확인이 필요함
+                if (signUpData.session) {
+                    state.session = signUpData.session;
+                    authDialog.close();
+                    updateButtons();
+                    navigateTo('#/');
+                } else {
+                    // 이메일 확인이 필요한 경우 자동 로그인 시도
+                    const { data: signInData, error: signInError } = await state.supabase.auth.signInWithPassword({ email, password });
+                    if (signInError) {
+                        alert(signInError.message || '회원가입 완료. 이메일 확인 후 다시 로그인해주세요.');
+                        isSignup = false;
+                        authTitle.textContent = '로그인';
+                        authSubmit.textContent = '로그인';
+                        toggleAuthMode.textContent = '회원가입';
+                    } else {
+                        state.session = signInData.session;
+                        authDialog.close();
+                        updateButtons();
+                        navigateTo('#/');
+                    }
+                }
             } else {
                 const { data, error } = await state.supabase.auth.signInWithPassword({ email, password });
                 if (error) throw error;
@@ -91,8 +118,7 @@ function setupAuthUI() {
                 navigateTo('#/');
             }
         } catch (err) {
-            // alert(err.message || '오류가 발생했습니다.');///
-            alert("로그인 정보를 확인해주세요.");
+            alert(err?.message || '오류가 발생했습니다.');
         }
     });
 
