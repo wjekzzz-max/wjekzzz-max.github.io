@@ -218,6 +218,12 @@ async function renderRequests(root) {
   `;
 
     document.getElementById('applyFilters').addEventListener('click', () => loadRequests());
+    document.getElementById('search').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            loadRequests();
+        }
+    });
     await loadRequests();
 
     async function loadRequests() {
@@ -227,7 +233,8 @@ async function renderRequests(root) {
 
         let query = state.supabase.from('requests_view').select('*').order('created_at', { ascending: false }).limit(50);
         if (search) {
-            query = query.ilike('search_text', `%${search}%`);
+            const encoded = search.replace(/%/g, '\\%').replace(/_/g, '\\_');
+            query = query.or(`title.ilike.%${encoded}%,summary.ilike.%${encoded}%`);
         }
         if (category) {
             query = query.eq('category', category);
