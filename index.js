@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
 // Supabase 설정: 아래 두 값을 본인 프로젝트 값으로 변경하세요.
 const SUPABASE_URL = window.SUPABASE_URL || 'https://ukzyflvgnagekrlxfsdp.supabase.co';
 const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVrenlmbHZnbmFnZWtybHhmc2RwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE4ODUxOTEsImV4cCI6MjA3NzQ2MTE5MX0.OOZhNNJN4zeKC10vHcSC9JWtbxzzz514jbOOcRCqDBA';
@@ -15,8 +17,7 @@ async function initApp() {
     if (y) y.textContent = new Date().getFullYear();
 
     // Supabase 클라이언트
-    // eslint-disable-next-line no-undef
-    state.supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    state.supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data } = await state.supabase.auth.getSession();
     state.session = data.session;
 
@@ -90,7 +91,8 @@ function setupAuthUI() {
                 navigateTo('#/');
             }
         } catch (err) {
-            alert(err.message || '오류가 발생했습니다.');
+            // alert(err.message || '오류가 발생했습니다.');///
+            alert("로그인 정보를 확인해주세요.");
         }
     });
 
@@ -104,6 +106,7 @@ function setupAuthUI() {
 const routes = {
     '#/': renderHome,
     '#/requests': renderRequests,
+    '#/new-request': renderNewRequest,
     '#/profile': renderProfile,
     '#/customer': renderCustomer,
     '#/report': renderReport,
@@ -247,6 +250,69 @@ async function renderRequests(root) {
         }
         const reviewedUserId = e.currentTarget.getAttribute('data-user-id');
         openReviewDialog(reviewedUserId);
+    }
+}
+
+// 의뢰 작성 (로그인 필요)
+async function renderNewRequest(root) {
+    if (!state.session) {
+        root.innerHTML = `<div class="card"><h3>로그인이 필요합니다</h3><p class="muted">의뢰 작성은 로그인 후 이용할 수 있어요.</p></div>`;
+        return;
+    }
+    root.innerHTML = `
+    <div class="card">
+      <h3>의뢰 작성</h3>
+      <div class="grid">
+        <div class="field">
+          <label>제목</label>
+          <input id="reqTitle" placeholder="예: 로고 디자인 의뢰">
+        </div>
+        <div class="field">
+          <label>카테고리</label>
+          <select id="reqCategory">
+            <option value="">선택</option>
+            <option>디자인</option>
+            <option>개발</option>
+            <option>번역</option>
+            <option>컨설팅</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>요약</label>
+          <textarea id="reqSummary" placeholder="간단한 요구사항을 적어주세요"></textarea>
+        </div>
+        <div class="row" style="justify-content:flex-end;gap:8px">
+          <button class="btn" id="cancelNewReq">취소</button>
+          <button class="btn btn-primary" id="submitNewReq">등록</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+    document.getElementById('cancelNewReq').addEventListener('click', () => navigateTo('#/requests'));
+    document.getElementById('submitNewReq').addEventListener('click', submitNewRequest);
+
+    async function submitNewRequest() {
+        const title = document.getElementById('reqTitle').value.trim();
+        const category = document.getElementById('reqCategory').value.trim();
+        const summary = document.getElementById('reqSummary').value.trim();
+        if (!title || !category) {
+            alert('제목과 카테고리를 입력하세요.');
+            return;
+        }
+        const payload = {
+            owner_user_id: state.session.user.id,
+            title,
+            summary,
+            category,
+        };
+        const { error } = await state.supabase.from('requests').insert(payload);
+        if (error) {
+            alert('등록 실패: ' + error.message);
+            return;
+        }
+        alert('의뢰가 등록되었습니다.');
+        navigateTo('#/requests');
     }
 }
 
