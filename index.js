@@ -8,6 +8,7 @@ const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5c
 const state = {
     supabase: null,
     session: null,
+    pendingReportTarget: null,
 };
 
 // 초기화
@@ -90,6 +91,7 @@ function setupAuthUI() {
                 // 일부 설정에서는 즉시 세션이 생기지 않고 이메일 확인이 필요함
                 if (signUpData.session) {
                     state.session = signUpData.session;
+                    try { await ensureProfile(); } catch(_) {}
                     authDialog.close();
                     updateButtons();
                     navigateTo('#/');
@@ -104,6 +106,7 @@ function setupAuthUI() {
                         toggleAuthMode.textContent = '회원가입';
                     } else {
                         state.session = signInData.session;
+                        try { await ensureProfile(); } catch(_) {}
                         authDialog.close();
                         updateButtons();
                         navigateTo('#/');
@@ -113,6 +116,7 @@ function setupAuthUI() {
                 const { data, error } = await state.supabase.auth.signInWithPassword({ email, password });
                 if (error) throw error;
                 state.session = data.session;
+                try { await ensureProfile(); } catch(_) {}
                 authDialog.close();
                 updateButtons();
                 navigateTo('#/');
@@ -125,6 +129,9 @@ function setupAuthUI() {
     state.supabase.auth.onAuthStateChange(async (_event, session) => {
         state.session = session;
         updateButtons();
+        if (session?.user) {
+            try { await ensureProfile(); } catch (_) {}
+        }
     });
 }
 
@@ -253,14 +260,25 @@ async function renderRequests(root) {
             list.innerHTML = `<div class="card"><p class="muted">결과가 없습니다.</p></div>`;
             return;
         }
-        list.innerHTML = data.map(renderRequestItem).join('');
+        // 작성자 핸들 조회
+        let handlesByUserId = {};
+        try {
+            const ids = Array.from(new Set(data.map((d) => d.owner_user_id))).filter(Boolean);
+            if (ids.length) {
+                const { data: profs } = await state.supabase.from('profiles').select('user_id, handle').in('user_id', ids);
+                (profs || []).forEach(p => { if (p.handle) handlesByUserId[p.user_id] = p.handle; });
+            }
+        } catch(_) {}
+        list.innerHTML = data.map((item) => renderRequestItem(item, handlesByUserId)).join('');
         document.querySelectorAll('[data-action="review"]').forEach((btn) => btn.addEventListener('click', onClickReview));
+        document.querySelectorAll('[data-action="report-user"]').forEach((btn) => btn.addEventListener('click', onClickReportUser));
         document.querySelectorAll('[data-action="delete"]').forEach((btn) => btn.addEventListener('click', onClickDelete));
     }
 
-    function renderRequestItem(item) {
+    function renderRequestItem(item, handlesByUserId) {
         const rating = item.avg_rating ? Number(item.avg_rating).toFixed(1) : '-';
         const isOwner = !!state.session && state.session.user.id === item.owner_user_id;
+        const handle = handlesByUserId?.[item.owner_user_id] || (item.owner_user_id ? item.owner_user_id.slice(0,8) : '-');
         return `
       <div class="list-item">
         <div>
@@ -269,10 +287,12 @@ async function renderRequests(root) {
           <div class="row" style="gap:8px">
             <span class="chip">${escapeHtml(item.category || '기타')}</span>
             <span class="chip"><span class="rating">★</span> ${rating}</span>
+            <span class="chip">작성자: ${escapeHtml(handle)}</span>
           </div>
         </div>
         <div class="row">
           <button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>
+          <button class="btn" data-action="report-user" data-user-id="${item.owner_user_id}" data-user-handle="${handle}">작성자 신고</button>
           ${isOwner ? `<button class="btn" data-action="delete" data-id="${item.id}">삭제</button>` : ''}
         </div>
       </div>
@@ -286,6 +306,13 @@ async function renderRequests(root) {
         }
         const reviewedUserId = e.currentTarget.getAttribute('data-user-id');
         openReviewDialog(reviewedUserId);
+    }
+
+    function onClickReportUser(e) {
+        const h = e.currentTarget.getAttribute('data-user-handle');
+        const target = h || e.currentTarget.getAttribute('data-user-id');
+        state.pendingReportTarget = target;
+        navigateTo('#/report');
     }
 
     async function onClickDelete(e) {
@@ -449,6 +476,10 @@ async function renderProfile(root) {
 
 // 고객센터 (티켓 생성)
 async function renderCustomer(root) {
+    if (!state.session) {
+        root.innerHTML = `<div class="card"><h3>로그인이 필요합니다</h3><p class="muted">고객센터 문의는 로그인 후 이용할 수 있어요.</p></div>`;
+        return;
+    }
     root.innerHTML = `
     <div class="card">
       <h3>고객센터 문의</h3>
@@ -473,6 +504,7 @@ async function renderCustomer(root) {
   `;
 
     document.getElementById('submitTicket').addEventListener('click', async () => {
+        if (!state.session) { alert('로그인이 필요합니다'); return; }
         const email = document.getElementById('ticketEmail').value.trim();
         const title = document.getElementById('ticketTitle').value.trim();
         const body = document.getElementById('ticketBody').value.trim();
@@ -486,6 +518,10 @@ async function renderCustomer(root) {
 
 // 신고 (간단)
 async function renderReport(root) {
+    if (!state.session) {
+        root.innerHTML = `<div class="card"><h3>로그인이 필요합니다</h3><p class="muted">신고 기능은 로그인 후 이용할 수 있어요.</p></div>`;
+        return;
+    }
     root.innerHTML = `
     <div class="card">
       <h3>신고하기</h3>
@@ -505,7 +541,15 @@ async function renderReport(root) {
     </div>
   `;
 
+    // 작성자 신고 버튼에서 넘어온 값 채우기
+    if (state.pendingReportTarget) {
+        const input = document.getElementById('reportTarget');
+        input.value = state.pendingReportTarget;
+        state.pendingReportTarget = null;
+    }
+
     document.getElementById('submitReport').addEventListener('click', async () => {
+        if (!state.session) { alert('로그인이 필요합니다'); return; }
         const target = document.getElementById('reportTarget').value.trim();
         const reason = document.getElementById('reportReason').value.trim();
         if (!target || !reason) return alert('모든 항목을 입력하세요.');
@@ -544,6 +588,30 @@ function escapeHtml(str) {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#039;');
+}
+
+// 프로필(핸들) 보장: 없으면 한 번 입력 받아 저장
+async function ensureProfile() {
+    const uid = state.session?.user?.id;
+    if (!uid) return;
+    try {
+        const { data: prof } = await state.supabase.from('profiles').select('user_id, handle').eq('user_id', uid).maybeSingle();
+        if (prof && prof.handle) return;
+    } catch (_) {
+        // 프로필 테이블이 없으면 무시
+        return;
+    }
+
+    // 간단한 핸들 입력
+    let handle = '';
+    for (let i=0; i<3; i++) {
+        handle = prompt('표시할 아이디(영문/숫자/밑줄, 3~20자):', '') || '';
+        if (!handle) return; // 사용자가 취소한 경우
+        if (!/^[-_a-zA-Z0-9]{3,20}$/.test(handle)) { alert('형식이 올바르지 않습니다.'); continue; }
+        const { error } = await state.supabase.from('profiles').upsert({ user_id: uid, handle }, { onConflict: 'user_id' });
+        if (error) { alert(error.message || '저장 실패'); continue; }
+        break;
+    }
 }
 
 // 시작
