@@ -11,7 +11,8 @@ const state = {
     pendingReportTarget: null,
     isAdmin: false,  // 관리자 여부
     activeMessageDialog: null,  // 현재 열려있는 메시지 다이얼로그 정보 {requestId, receiverId}
-    unreadMessageCounts: {},  // 읽지 않은 메시지 수 { "requestId-receiverId": count }
+    unreadMessageCounts: {},  // 읽지 않은 메시지 수 { "requestId-senderId": count }
+    readMessageKeys: new Set(),  // 이미 읽은 메시지 키 목록 (다이얼로그를 열어서 본 대화방)
     messageCheckInterval: null,  // 메시지 확인 인터벌
 };
 
@@ -2443,6 +2444,30 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     // 현재 열려있는 메시지 다이얼로그 정보 저장
     state.activeMessageDialog = { requestId, receiverId, senderId };
     
+    // 이 대화방을 읽은 것으로 표시
+    // receiverId가 상대방이므로, 상대방이 보낸 메시지를 읽은 것
+    const messageKey = `${requestId}-${receiverId}`;
+    state.readMessageKeys.add(messageKey);
+    
+    // 또한 해당 의뢰의 모든 읽지 않은 메시지도 읽은 것으로 표시 (다른 상대방과의 메시지 포함)
+    // 실제 받은 메시지들을 확인해서 모든 키를 추가
+    try {
+        const { data: messages } = await state.supabase
+            .from('messages')
+            .select('sender_id')
+            .eq('receiver_id', senderId)
+            .eq('request_id', requestId);
+        
+        if (messages && messages.length > 0) {
+            messages.forEach(msg => {
+                const key = `${requestId}-${msg.sender_id}`;
+                state.readMessageKeys.add(key);
+            });
+        }
+    } catch (err) {
+        console.error('읽은 메시지 키 추가 중 오류:', err);
+    }
+    
     // 배지 업데이트 (열린 대화방의 메시지는 읽은 것으로 처리)
     await updateUnreadMessageCounts();
     
@@ -2469,7 +2494,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     const closeBtnHandler = () => {
         state.activeMessageDialog = null;
         messagesViewDialog.close();
-        // 다이얼로그 닫을 때 배지 업데이트
+        // 다이얼로그 닫을 때도 읽은 상태는 유지되므로 배지만 업데이트
         updateUnreadMessageCounts();
     };
     messagesViewClose.replaceWith(messagesViewClose.cloneNode(true));
@@ -2477,14 +2502,16 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     newCloseBtn.addEventListener('click', closeBtnHandler);
     
     // 다이얼로그가 다른 방식으로 닫힐 때도 처리 (ESC 키 등)
-    messagesViewDialog.addEventListener('close', () => {
+    const dialogCloseHandler = () => {
         if (state.activeMessageDialog && 
             state.activeMessageDialog.requestId === requestId &&
             state.activeMessageDialog.receiverId === receiverId) {
             state.activeMessageDialog = null;
+            // 읽은 상태는 유지되므로 배지만 업데이트
             updateUnreadMessageCounts();
         }
-    });
+    };
+    messagesViewDialog.addEventListener('close', dialogCloseHandler);
 
     // 메시지 전송 이벤트
     const newMessageText = document.getElementById('newMessageText');
@@ -3403,6 +3430,7 @@ function stopMessageCheck() {
         state.messageCheckInterval = null;
     }
     state.unreadMessageCounts = {};
+    state.readMessageKeys.clear();
 }
 
 // 읽지 않은 메시지 수 업데이트
@@ -3424,23 +3452,27 @@ async function updateUnreadMessageCounts() {
             return;
         }
         
-        // 현재 열려있는 메시지 다이얼로그가 있으면 해당 대화방의 메시지는 읽은 것으로 처리
-        const activeDialog = state.activeMessageDialog;
-        
         // request_id와 sender_id 조합별로 읽지 않은 메시지 수 계산
         const counts = {};
         
         if (messages && messages.length > 0) {
             messages.forEach(msg => {
-                // 현재 열려있는 다이얼로그와 같은 request_id와 상대방이면 읽은 것으로 처리
+                // 키: "requestId-senderId" (현재 사용자 입장에서는 sender_id가 상대방)
+                const key = `${msg.request_id}-${msg.sender_id}`;
+                
+                // 이미 읽은 대화방이면 카운트하지 않음
+                if (state.readMessageKeys.has(key)) {
+                    return;
+                }
+                
+                // 현재 열려있는 다이얼로그와 같은 대화방이면 읽은 것으로 처리 (실시간 업데이트)
+                const activeDialog = state.activeMessageDialog;
                 if (activeDialog && 
                     msg.request_id === activeDialog.requestId &&
                     (msg.sender_id === activeDialog.receiverId || msg.sender_id === activeDialog.senderId)) {
                     return; // 읽은 메시지는 카운트하지 않음
                 }
                 
-                // 키: "requestId-receiverId" (현재 사용자 입장에서는 senderId가 상대방)
-                const key = `${msg.request_id}-${msg.sender_id}`;
                 counts[key] = (counts[key] || 0) + 1;
             });
         }
@@ -3461,22 +3493,19 @@ function updateMessageBadges() {
     // 모든 메시지 보내기/보기 버튼 찾기
     document.querySelectorAll('[data-action="send-message"], [data-action="view-messages"]').forEach(btn => {
         const requestId = btn.getAttribute('data-request-id');
-        const receiverId = btn.getAttribute('data-receiver-id');
-        const senderId = state.session?.user?.id;
+        const receiverId = btn.getAttribute('data-receiver-id'); // 의뢰 작성자 ID
+        const currentUserId = state.session?.user?.id;
         
-        if (!requestId || !receiverId || !senderId) return;
+        if (!requestId || !receiverId || !currentUserId) return;
         
-        // 버튼이 "메시지 보내기"인 경우: 상대방(receiverId)이 보낸 메시지 수
-        // 버튼이 "메시지 보기"인 경우: 내가 보낸 게 아니라 상대방이 보낸 메시지 수
-        // 현재 사용자 입장에서 상대방 ID는 receiverId
-        // 하지만 버튼의 receiverId는 의뢰 작성자이므로, 내가 보낸 메시지의 경우 sender가 나
-        // 따라서 받은 메시지 기준으로는 sender_id가 상대방
-        
-        // 키 생성: requestId와 상대방 ID 조합
-        // "메시지 보내기" 버튼: receiverId가 상대방 (의뢰 작성자에게 보내기)
-        // "메시지 보기" 버튼: receiverId가 상대방 (의뢰 작성자가 보기)
-        const key = `${requestId}-${receiverId}`;
-        const count = state.unreadMessageCounts[key] || 0;
+        // 해당 의뢰(requestId)의 모든 읽지 않은 메시지 수 합산
+        // 받은 메시지의 키는 `${requestId}-${sender_id}` 형태 (sender_id가 상대방)
+        let count = 0;
+        Object.keys(state.unreadMessageCounts).forEach(key => {
+            if (key.startsWith(`${requestId}-`)) {
+                count += state.unreadMessageCounts[key];
+            }
+        });
         
         // 배지 업데이트
         let wrapper = btn.parentElement;
