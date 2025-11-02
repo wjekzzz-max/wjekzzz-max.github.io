@@ -559,6 +559,7 @@ async function renderRequests(root) {
         
         list.innerHTML = data.map((item) => renderRequestItem(item, handlesByUserId, applicationStatusByRequestId[item.id])).join('');
         document.querySelectorAll('[data-action="send-message"]').forEach((btn) => btn.addEventListener('click', onClickSendMessage));
+        document.querySelectorAll('[data-action="view-messages"]').forEach((btn) => btn.addEventListener('click', onClickViewMessages));
         document.querySelectorAll('[data-action="view-reviews"]').forEach((btn) => btn.addEventListener('click', onClickViewReviews));
         document.querySelectorAll('[data-action="review"]').forEach((btn) => btn.addEventListener('click', onClickReview));
         document.querySelectorAll('[data-action="apply-request"]').forEach((btn) => btn.addEventListener('click', onClickApplyRequest));
@@ -600,7 +601,7 @@ async function renderRequests(root) {
           </div>
         </div>
         <div class="row">
-          ${state.session && !isOwner ? `<button class="btn" data-action="send-message" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" data-receiver-id="${item.owner_user_id}" data-receiver-handle="${escapeHtml(handle)}">메시지 보내기</button>` : ''}
+          ${state.session ? `<button class="btn" data-action="${isOwner ? 'view-messages' : 'send-message'}" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" data-receiver-id="${item.owner_user_id}" data-receiver-handle="${escapeHtml(handle)}">${isOwner ? '메시지 보기' : '메시지 보내기'}</button>` : ''}
           <button class="btn" data-action="view-reviews" data-user-id="${item.owner_user_id}" data-user-handle="${handle}">작성자 리뷰</button>
           ${!isOwner && state.session ? `<button class="${applyButtonClass}" data-action="apply-request" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" ${applyButtonDisabled ? 'disabled' : ''}>${applyButtonText}</button>` : ''}
           ${!isOwner && state.session ? `<button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>` : ''}
@@ -617,6 +618,12 @@ async function renderRequests(root) {
         const requestId = e.currentTarget.getAttribute('data-request-id');
         const requestTitle = e.currentTarget.getAttribute('data-request-title');
         openMessagesDialog(receiverId, receiverHandle, requestId, requestTitle);
+    }
+    
+    async function onClickViewMessages(e) {
+        const requestId = e.currentTarget.getAttribute('data-request-id');
+        const requestTitle = e.currentTarget.getAttribute('data-request-title');
+        await openRequestMessagesDialog(requestId, requestTitle);
     }
 
     function onClickViewReviews(e) {
@@ -2422,7 +2429,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     const messagesList = document.getElementById('messagesList');
     const messageFormSection = document.getElementById('messageFormSection');
 
-    messagesViewTitle.textContent = `"${escapeHtml(receiverHandle)}"님과의 메시지`;
+    messagesViewTitle.textContent = `"${escapeHtml(requestTitle)}" - ${escapeHtml(receiverHandle)}님과의 메시지`;
     messagesList.innerHTML = '<p class="muted" style="text-align:center;padding:20px">로딩 중...</p>';
 
     // 메시지 작성 폼
@@ -2459,7 +2466,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
                 sender_id: senderId,
                 receiver_id: receiverId,
                 message: text,
-                request_id: requestId, // 관련 의뢰 ID (선택적)
+                request_id: requestId, // 관련 의뢰 ID (필수)
             });
 
             submitMessage.disabled = false;
@@ -2471,7 +2478,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
                 console.error('메시지 전송 오류:', error);
                 
                 if (fullError.includes('schema cache') || fullError.includes('does not exist') || fullError.includes('Could not find')) {
-                    alert(`메시지 테이블을 찾을 수 없습니다.\n\nSupabase SQL Editor에서 messages 테이블을 생성해야 합니다.\n\n생성 SQL:\n\nCREATE TABLE IF NOT EXISTS messages (\n  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n  sender_id UUID NOT NULL,\n  receiver_id UUID NOT NULL,\n  message TEXT NOT NULL,\n  request_id UUID REFERENCES requests(id) ON DELETE SET NULL,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  read_at TIMESTAMPTZ\n);\n\nCREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);\nCREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id);\nCREATE INDEX IF NOT EXISTS idx_messages_request ON messages(request_id);\n\nALTER TABLE messages ENABLE ROW LEVEL SECURITY;\n\n-- RLS 정책\nDROP POLICY IF EXISTS "Users can view own messages" ON messages;\nDROP POLICY IF EXISTS "Users can send messages" ON messages;\n\nCREATE POLICY "Users can view own messages" ON messages\n  FOR SELECT USING (\n    sender_id = auth.uid() OR receiver_id = auth.uid()\n  );\n\nCREATE POLICY "Users can send messages" ON messages\n  FOR INSERT WITH CHECK (\n    auth.role() = 'authenticated' AND sender_id = auth.uid()\n  );`);
+                    alert(`메시지 테이블을 찾을 수 없습니다.\n\nSupabase SQL Editor에서 messages 테이블을 생성해야 합니다.\n\n생성 SQL:\n\nCREATE TABLE IF NOT EXISTS messages (\n  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n  sender_id UUID NOT NULL,\n  receiver_id UUID NOT NULL,\n  message TEXT NOT NULL,\n  request_id UUID NOT NULL REFERENCES requests(id) ON DELETE CASCADE,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  read_at TIMESTAMPTZ\n);\n\nCREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);\nCREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id);\nCREATE INDEX IF NOT EXISTS idx_messages_request ON messages(request_id);\n\nALTER TABLE messages ENABLE ROW LEVEL SECURITY;\n\n-- RLS 정책\nDROP POLICY IF EXISTS "Users can view own messages" ON messages;\nDROP POLICY IF EXISTS "Users can send messages" ON messages;\n\nCREATE POLICY "Users can view own messages" ON messages\n  FOR SELECT USING (\n    (sender_id = auth.uid() OR receiver_id = auth.uid())\n  );\n\nCREATE POLICY "Users can send messages" ON messages\n  FOR INSERT WITH CHECK (\n    auth.role() = 'authenticated' AND sender_id = auth.uid()\n  );`);
                 } else {
                     alert('메시지 전송 실패: ' + errorMsg + '\n\n상세: ' + fullError);
                 }
@@ -2504,10 +2511,11 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
 
     async function loadMessages() {
         try {
-            // 양방향 메시지 모두 가져오기 (sender 또는 receiver가 본인이거나 상대방인 것)
+            // 이 의뢰(request_id)에 대한 메시지만 가져오기
             const { data: messages, error } = await state.supabase
                 .from('messages')
                 .select('*')
+                .eq('request_id', requestId)
                 .or(`and(sender_id.eq.${senderId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${senderId})`)
                 .order('created_at', { ascending: true });
 
@@ -2525,7 +2533,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
   sender_id UUID NOT NULL,
   receiver_id UUID NOT NULL,
   message TEXT NOT NULL,
-  request_id UUID REFERENCES requests(id) ON DELETE SET NULL,
+  request_id UUID NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   read_at TIMESTAMPTZ
 );
@@ -2542,7 +2550,7 @@ DROP POLICY IF EXISTS "Users can send messages" ON messages;
 
 CREATE POLICY "Users can view own messages" ON messages
   FOR SELECT USING (
-    sender_id = auth.uid() OR receiver_id = auth.uid()
+    (sender_id = auth.uid() OR receiver_id = auth.uid())
   );
 
 CREATE POLICY "Users can send messages" ON messages
@@ -2559,10 +2567,11 @@ CREATE POLICY "Users can send messages" ON messages
                 return;
             }
 
-            // 대화 상대와의 메시지만 필터링
+            // 이미 request_id로 필터링되어 있지만, 추가 안전장치로 확인
             const conversationMessages = (messages || []).filter(msg => 
-                (msg.sender_id === senderId && msg.receiver_id === receiverId) ||
-                (msg.sender_id === receiverId && msg.receiver_id === senderId)
+                msg.request_id === requestId &&
+                ((msg.sender_id === senderId && msg.receiver_id === receiverId) ||
+                 (msg.sender_id === receiverId && msg.receiver_id === senderId))
             );
 
             if (!conversationMessages || conversationMessages.length === 0) {
@@ -2625,6 +2634,105 @@ CREATE POLICY "Users can send messages" ON messages
     // 주기적으로 메시지 새로고침 (선택적 - 필요시 활성화)
     // const refreshInterval = setInterval(() => loadMessages(), 5000);
     // messagesViewDialog.addEventListener('close', () => clearInterval(refreshInterval));
+}
+
+// 의뢰 작성자가 자신의 의뢰에 대한 메시지 참가자 목록 보기
+async function openRequestMessagesDialog(requestId, requestTitle) {
+    if (!state.session) {
+        alert('로그인이 필요합니다');
+        return;
+    }
+    
+    const ownerId = state.session.user.id;
+    
+    // 이 의뢰에 메시지를 보낸 사람들 목록 가져오기
+    try {
+        const { data: messages, error } = await state.supabase
+            .from('messages')
+            .select('sender_id, receiver_id')
+            .eq('request_id', requestId)
+            .or(`sender_id.eq.${ownerId},receiver_id.eq.${ownerId}`);
+        
+        if (error) {
+            const fullError = error.message || String(error);
+            if (fullError.includes('schema cache') || fullError.includes('does not exist') || fullError.includes('Could not find')) {
+                alert('메시지 테이블을 찾을 수 없습니다.\n\nSupabase SQL Editor에서 messages 테이블을 생성해주세요.');
+            } else {
+                alert('메시지 로딩 실패: ' + translateError(error));
+            }
+            return;
+        }
+        
+        // 메시지를 보낸/받은 모든 사용자 ID 수집
+        const participantIds = new Set();
+        (messages || []).forEach(msg => {
+            if (msg.sender_id !== ownerId) participantIds.add(msg.sender_id);
+            if (msg.receiver_id !== ownerId) participantIds.add(msg.receiver_id);
+        });
+        
+        if (participantIds.size === 0) {
+            alert('이 의뢰에 대한 메시지가 아직 없습니다.');
+            return;
+        }
+        
+        // 사용자 핸들 정보 가져오기
+        const userIds = Array.from(participantIds);
+        let handlesByUserId = {};
+        try {
+            const { data: profs } = await state.supabase
+                .from('profiles')
+                .select('user_id, handle')
+                .in('user_id', userIds);
+            (profs || []).forEach(p => {
+                if (p.handle) handlesByUserId[p.user_id] = p.handle;
+            });
+        } catch(_) {}
+        
+        // 메시지 참가자 선택 다이얼로그
+        const participantList = userIds.map(userId => {
+            const handle = handlesByUserId[userId] || userId.slice(0,8) || '익명';
+            return `<button class="btn" style="width:100%;margin-bottom:8px;text-align:left" data-participant-id="${userId}" data-participant-handle="${escapeHtml(handle)}">${escapeHtml(handle)}님과의 메시지</button>`;
+        }).join('');
+        
+        const choice = await new Promise((resolve) => {
+            const dialog = document.createElement('dialog');
+            dialog.style.cssText = 'max-width:400px;padding:20px;background:var(--background);border:1px solid var(--border);border-radius:12px';
+            dialog.innerHTML = `
+                <div>
+                    <h3 style="margin:0 0 16px">"${escapeHtml(requestTitle)}" 메시지 참가자</h3>
+                    <div style="margin-bottom:16px">
+                        ${participantList}
+                    </div>
+                    <div style="display:flex;justify-content:flex-end">
+                        <button class="btn" id="closeParticipantDialog">닫기</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(dialog);
+            dialog.showModal();
+            
+            dialog.querySelectorAll('[data-participant-id]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const participantId = btn.getAttribute('data-participant-id');
+                    const participantHandle = btn.getAttribute('data-participant-handle');
+                    document.body.removeChild(dialog);
+                    resolve({ userId: participantId, handle: participantHandle });
+                });
+            });
+            
+            dialog.querySelector('#closeParticipantDialog').addEventListener('click', () => {
+                document.body.removeChild(dialog);
+                resolve(null);
+            });
+        });
+        
+        if (choice) {
+            openMessagesDialog(choice.userId, choice.handle, requestId, requestTitle);
+        }
+    } catch(err) {
+        console.error('메시지 참가자 목록 로딩 오류:', err);
+        alert('오류가 발생했습니다: ' + (err.message || String(err)));
+    }
 }
 
 // 댓글 관련 함수 제거 (레거시)
