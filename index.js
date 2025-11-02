@@ -2631,9 +2631,33 @@ CREATE POLICY "Users can send messages" ON messages
         }
     }
     
-    // 주기적으로 메시지 새로고침 (선택적 - 필요시 활성화)
-    // const refreshInterval = setInterval(() => loadMessages(), 5000);
-    // messagesViewDialog.addEventListener('close', () => clearInterval(refreshInterval));
+    // 주기적으로 메시지 새로고침 (5초마다)
+    let refreshInterval = null;
+    let isDialogOpen = true;
+    
+    const startRefresh = () => {
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = setInterval(async () => {
+            if (isDialogOpen) {
+                await loadMessages();
+            }
+        }, 3000); // 3초마다 새로고침
+    };
+    
+    const stopRefresh = () => {
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+        }
+        isDialogOpen = false;
+    };
+    
+    // 다이얼로그가 닫힐 때 인터벌 정리
+    messagesViewDialog.addEventListener('close', stopRefresh);
+    messagesViewDialog.addEventListener('cancel', stopRefresh);
+    
+    // 새로고침 시작
+    startRefresh();
 }
 
 // 의뢰 작성자가 자신의 의뢰에 대한 메시지 참가자 목록 보기
