@@ -31,6 +31,59 @@
         </div>
     </footer>
 
+    <!-- Comments View Dialog -->
+    <dialog id="commentsViewDialog">
+        <div class="comments-view-form">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <h3 id="commentsViewTitle">댓글</h3>
+                <button type="button" class="btn btn-ghost" id="commentsViewClose" style="min-width:auto;padding:4px 8px">✕</button>
+            </div>
+            <div id="commentsList" style="max-height:400px;overflow-y:auto;padding-right:4px;margin-bottom:16px">
+                <p class="muted" style="text-align:center;padding:20px">로딩 중...</p>
+            </div>
+            <div id="commentFormSection"></div>
+        </div>
+    </dialog>
+
+    <!-- Reviews View Dialog -->
+    <dialog id="reviewsViewDialog">
+        <div class="reviews-view-form">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <h3 id="reviewsViewTitle">리뷰</h3>
+                <button type="button" class="btn btn-ghost" id="reviewsViewClose" style="min-width:auto;padding:4px 8px">✕</button>
+            </div>
+            <div id="reviewsList" style="max-height:500px;overflow-y:auto;padding-right:4px">
+                <p class="muted" style="text-align:center;padding:20px">로딩 중...</p>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Review Dialog -->
+    <dialog id="reviewDialog">
+        <form method="dialog" class="review-form" id="reviewForm">
+            <h3>리뷰 작성</h3>
+            <div class="field">
+                <label>평점</label>
+                <div class="rating-selector" id="ratingSelector">
+                    <button type="button" class="rating-btn" data-rating="1">★</button>
+                    <button type="button" class="rating-btn" data-rating="2">★</button>
+                    <button type="button" class="rating-btn" data-rating="3">★</button>
+                    <button type="button" class="rating-btn" data-rating="4">★</button>
+                    <button type="button" class="rating-btn" data-rating="5">★</button>
+                </div>
+                <div class="rating-label" id="ratingLabel">평점을 선택해주세요</div>
+            </div>
+            <div class="field">
+                <label>코멘트</label>
+                <textarea id="reviewComment" placeholder="리뷰를 작성해주세요..."></textarea>
+            </div>
+            <div class="review-actions">
+                <button type="button" class="btn" id="reviewClose">취소</button>
+                <button type="submit" class="btn btn-primary" id="reviewSubmit">등록</button>
+            </div>
+        </form>
+    </dialog>
+
     <!-- Auth Modal -->
     <dialog id="authDialog">
         <form method="dialog" class="auth-form" id="authForm">
@@ -41,11 +94,35 @@
             </label>
             <label>
                 비밀번호
-                <input type="password" id="authPassword" minlength="6" required>
+                <div class="password-wrapper">
+                    <input type="password" id="authPassword" minlength="6" required>
+                    <button type="button" class="password-toggle" data-target="authPassword" aria-label="비밀번호 표시/숨기기">
+                        <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                        </svg>
+                    </button>
+                </div>
             </label>
             <label>
                 비밀번호 확인
-                <input type="password" id="authPassword2" minlength="6" required>
+                <div class="password-wrapper">
+                    <input type="password" id="authPassword2" minlength="6" required>
+                    <button type="button" class="password-toggle" data-target="authPassword2" aria-label="비밀번호 표시/숨기기">
+                        <svg class="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                        <svg class="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                        </svg>
+                    </button>
+                </div>
             </label>
             <div class="auth-actions">
                 <button type="submit" class="btn btn-primary" id="authSubmit">로그인</button>
