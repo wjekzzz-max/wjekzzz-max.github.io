@@ -13,6 +13,7 @@ const state = {
     activeMessageDialog: null,  // 현재 열려있는 메시지 다이얼로그 정보 {requestId, receiverId}
     unreadMessageCounts: {},  // 읽지 않은 메시지 수 { "requestId-senderId": count }
     readMessageKeys: new Set(),  // 이미 읽은 메시지 키 목록 (다이얼로그를 열어서 본 대화방)
+    lastReadMessageTime: {},  // 각 대화방별로 마지막으로 읽은 메시지 시간 { "requestId-receiverId": timestamp }
     messageCheckInterval: null,  // 메시지 확인 인터벌
 };
 
@@ -77,8 +78,9 @@ async function initApp() {
     setupAuthUI();
     setupRouting();
     
-    // 로그인되어 있으면 메시지 수 확인 시작
+    // 로그인되어 있으면 메시지 수 확인 시작 및 읽은 메시지 정보 복원
     if (state.session?.user) {
+        loadReadMessagesFromStorage();
         startMessageCheck();
     }
 }
@@ -278,11 +280,14 @@ function setupAuthUI() {
         await updateButtons();
         if (session?.user) {
             try { await ensureProfile(); } catch (_) {}
+            // 읽은 메시지 정보 복원
+            loadReadMessagesFromStorage();
             // 메시지 수 확인 시작
             startMessageCheck();
         } else {
             // 로그아웃 시 메시지 확인 중지
             stopMessageCheck();
+            // 읽은 메시지 정보는 유지 (같은 사용자가 다시 로그인하면 복원됨)
         }
     });
 
@@ -2614,17 +2619,28 @@ CREATE POLICY "Users can send messages" ON messages
                  (msg.sender_id === receiverId && msg.receiver_id === senderId))
             );
 
-            // 메시지를 실제로 볼 때, 현재 사용자가 받은 메시지들을 읽은 것으로 표시
+            // 메시지를 실제로 볼 때, 현재까지 받은 모든 메시지를 읽은 것으로 표시
+            // (배지를 0으로 만들기 위해 해당 대화방의 모든 기존 메시지 키를 읽은 목록에 추가)
             if (conversationMessages && conversationMessages.length > 0) {
+                const now = new Date().toISOString();
+                
+                // 현재까지 받은 모든 메시지를 읽은 것으로 표시
                 conversationMessages.forEach(msg => {
                     // 현재 사용자가 받은 메시지만 읽은 것으로 표시
                     if (msg.receiver_id === senderId && msg.sender_id === receiverId) {
                         const messageKey = `${msg.request_id}-${msg.sender_id}`;
                         state.readMessageKeys.add(messageKey);
+                        
+                        // 이 대화방을 마지막으로 읽은 시간을 기록 (이후 이 시간 이후의 새 메시지만 카운트)
+                        // 키는 메시지 키와 동일하게 사용
+                        state.lastReadMessageTime[messageKey] = now;
                     }
                 });
                 
-                // 배지 업데이트 (읽은 메시지가 반영되도록)
+                // localStorage에 저장 (새로고침해도 유지되도록)
+                saveReadMessagesToStorage();
+                
+                // 배지 업데이트 (배지가 0이 되도록)
                 updateUnreadMessageCounts();
             }
 
@@ -3420,6 +3436,49 @@ function stopMessageCheck() {
     }
     state.unreadMessageCounts = {};
     state.readMessageKeys.clear();
+    state.lastReadMessageTime = {};
+}
+
+// localStorage에서 읽은 메시지 정보 복원
+function loadReadMessagesFromStorage() {
+    if (!state.session?.user) return;
+    
+    try {
+        const userId = state.session.user.id;
+        const storageKey = `readMessages_${userId}`;
+        const saved = localStorage.getItem(storageKey);
+        
+        if (saved) {
+            const data = JSON.parse(saved);
+            // lastReadMessageTime 복원
+            if (data.lastReadMessageTime) {
+                state.lastReadMessageTime = data.lastReadMessageTime;
+            }
+            // readMessageKeys 복원
+            if (data.readMessageKeys && Array.isArray(data.readMessageKeys)) {
+                state.readMessageKeys = new Set(data.readMessageKeys);
+            }
+        }
+    } catch (err) {
+        console.error('읽은 메시지 정보 복원 중 오류:', err);
+    }
+}
+
+// localStorage에 읽은 메시지 정보 저장
+function saveReadMessagesToStorage() {
+    if (!state.session?.user) return;
+    
+    try {
+        const userId = state.session.user.id;
+        const storageKey = `readMessages_${userId}`;
+        const data = {
+            lastReadMessageTime: state.lastReadMessageTime,
+            readMessageKeys: Array.from(state.readMessageKeys),
+        };
+        localStorage.setItem(storageKey, JSON.stringify(data));
+    } catch (err) {
+        console.error('읽은 메시지 정보 저장 중 오류:', err);
+    }
 }
 
 // 읽지 않은 메시지 수 업데이트
@@ -3449,17 +3508,33 @@ async function updateUnreadMessageCounts() {
                 // 키: "requestId-senderId" (현재 사용자 입장에서는 sender_id가 상대방)
                 const key = `${msg.request_id}-${msg.sender_id}`;
                 
-                // 이미 읽은 대화방이면 카운트하지 않음
-                if (state.readMessageKeys.has(key)) {
-                    return;
-                }
-                
                 // 현재 열려있는 다이얼로그와 같은 대화방이면 읽은 것으로 처리 (실시간 업데이트)
                 const activeDialog = state.activeMessageDialog;
                 if (activeDialog && 
                     msg.request_id === activeDialog.requestId &&
                     (msg.sender_id === activeDialog.receiverId || msg.sender_id === activeDialog.senderId)) {
+                    // 다이얼로그가 열려있는 동안 새 메시지가 오면 즉시 읽은 것으로 표시
+                    state.readMessageKeys.add(key);
+                    // 마지막 읽은 시간 업데이트 (키는 메시지 키와 동일)
+                    state.lastReadMessageTime[key] = new Date().toISOString();
+                    // localStorage에 저장
+                    saveReadMessagesToStorage();
                     return; // 읽은 메시지는 카운트하지 않음
+                }
+                
+                // 대화방별 마지막 읽은 시간 이후의 메시지만 카운트
+                const dialogKey = `${msg.request_id}-${msg.sender_id}`;
+                const lastReadTime = state.lastReadMessageTime[dialogKey];
+                if (lastReadTime) {
+                    // 마지막으로 읽은 시간 이후의 메시지만 읽지 않은 것으로 카운트
+                    if (new Date(msg.created_at) <= new Date(lastReadTime)) {
+                        return; // 이미 읽은 시간 이후의 메시지는 카운트하지 않음
+                    }
+                } else {
+                    // 읽은 기록이 없으면 이미 읽은 키 목록 확인
+                    if (state.readMessageKeys.has(key)) {
+                        return;
+                    }
                 }
                 
                 counts[key] = (counts[key] || 0) + 1;
