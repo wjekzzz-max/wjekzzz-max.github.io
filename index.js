@@ -2444,32 +2444,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     // 현재 열려있는 메시지 다이얼로그 정보 저장
     state.activeMessageDialog = { requestId, receiverId, senderId };
     
-    // 이 대화방을 읽은 것으로 표시
-    // receiverId가 상대방이므로, 상대방이 보낸 메시지를 읽은 것
-    const messageKey = `${requestId}-${receiverId}`;
-    state.readMessageKeys.add(messageKey);
-    
-    // 또한 해당 의뢰의 모든 읽지 않은 메시지도 읽은 것으로 표시 (다른 상대방과의 메시지 포함)
-    // 실제 받은 메시지들을 확인해서 모든 키를 추가
-    try {
-        const { data: messages } = await state.supabase
-            .from('messages')
-            .select('sender_id')
-            .eq('receiver_id', senderId)
-            .eq('request_id', requestId);
-        
-        if (messages && messages.length > 0) {
-            messages.forEach(msg => {
-                const key = `${requestId}-${msg.sender_id}`;
-                state.readMessageKeys.add(key);
-            });
-        }
-    } catch (err) {
-        console.error('읽은 메시지 키 추가 중 오류:', err);
-    }
-    
-    // 배지 업데이트 (열린 대화방의 메시지는 읽은 것으로 처리)
-    await updateUnreadMessageCounts();
+    // 배지 업데이트는 메시지를 실제로 로드한 후에 처리됨
     
     const messagesViewDialog = document.getElementById('messagesViewDialog');
     const messagesViewTitle = document.getElementById('messagesViewTitle');
@@ -2638,6 +2613,20 @@ CREATE POLICY "Users can send messages" ON messages
                 ((msg.sender_id === senderId && msg.receiver_id === receiverId) ||
                  (msg.sender_id === receiverId && msg.receiver_id === senderId))
             );
+
+            // 메시지를 실제로 볼 때, 현재 사용자가 받은 메시지들을 읽은 것으로 표시
+            if (conversationMessages && conversationMessages.length > 0) {
+                conversationMessages.forEach(msg => {
+                    // 현재 사용자가 받은 메시지만 읽은 것으로 표시
+                    if (msg.receiver_id === senderId && msg.sender_id === receiverId) {
+                        const messageKey = `${msg.request_id}-${msg.sender_id}`;
+                        state.readMessageKeys.add(messageKey);
+                    }
+                });
+                
+                // 배지 업데이트 (읽은 메시지가 반영되도록)
+                updateUnreadMessageCounts();
+            }
 
             if (!conversationMessages || conversationMessages.length === 0) {
                 messagesList.innerHTML = '<div style="text-align:center;padding:40px"><p class="muted">아직 메시지가 없습니다.<br>첫 메시지를 보내보세요!</p></div>';
