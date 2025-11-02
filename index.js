@@ -9,7 +9,43 @@ const state = {
     supabase: null,
     session: null,
     pendingReportTarget: null,
+    isAdmin: false,  // 관리자 여부
 };
+
+// 관리자 이메일 리스트 (여기에 관리자 이메일을 추가하세요)
+const ADMIN_EMAILS = [
+    'wjekzzz@gmail.com',
+    // 여기에 더 많은 관리자 이메일 추가 가능
+];
+
+// 관리자 여부 확인 함수
+async function isAdmin(email) {
+    if (!email) return false;
+    
+    // 1. 하드코딩된 관리자 이메일 리스트 확인
+    if (ADMIN_EMAILS.includes(email.toLowerCase())) {
+        return true;
+    }
+    
+    // 2. Supabase admins 테이블에서 확인 (선택사항)
+    if (state.supabase) {
+        try {
+            const { data, error } = await state.supabase
+                .from('admins')
+                .select('email')
+                .eq('email', email.toLowerCase())
+                .maybeSingle();
+            
+            if (!error && data) {
+                return true;
+            }
+        } catch (_) {
+            // admins 테이블이 없으면 무시
+        }
+    }
+    
+    return false;
+}
 
 // 초기화
 async function initApp() {
@@ -21,6 +57,17 @@ async function initApp() {
     state.supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data } = await state.supabase.auth.getSession();
     state.session = data.session;
+    
+    // 페이지 새로고침 시 관리자 여부는 localStorage에서 복원
+    // (처음 로그인할 때만 저장, 새로고침 후에는 일반 사용자로 시작)
+    if (state.session?.user) {
+        const savedAdminStatus = localStorage.getItem('isAdmin') === 'true';
+        const emailMatchesAdmin = await isAdmin(state.session.user.email);
+        // 관리자 이메일이면서 저장된 상태가 관리자일 때만 관리자로 인식
+        state.isAdmin = savedAdminStatus && emailMatchesAdmin;
+    } else {
+        state.isAdmin = false;
+    }
 
     setupAuthUI();
     setupRouting();
@@ -28,6 +75,7 @@ async function initApp() {
 
 function setupAuthUI() {
     const loginBtn = document.getElementById('loginBtn');
+    const adminLoginBtn = document.getElementById('adminLoginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const authDialog = document.getElementById('authDialog');
     const authClose = document.getElementById('authClose');
@@ -37,18 +85,67 @@ function setupAuthUI() {
     const authSubmit = document.getElementById('authSubmit');
     const authPassword2Input = document.getElementById('authPassword2');
 
+    // 관리자 로그인 관련
+    const adminAuthDialog = document.getElementById('adminAuthDialog');
+    const adminAuthForm = document.getElementById('adminAuthForm');
+    const adminAuthTitle = document.getElementById('adminAuthTitle');
+    const adminAuthEmail = document.getElementById('adminAuthEmail');
+    const adminAuthPassword = document.getElementById('adminAuthPassword');
+    const adminAuthSubmit = document.getElementById('adminAuthSubmit');
+    const adminAuthClose = document.getElementById('adminAuthClose');
+
     let isSignup = false;
 
-    function updateButtons() {
+    const adminLink = document.getElementById('adminLink');
+    
+    async function updateButtons() {
         if (state.session) {
             loginBtn.style.display = 'none';
+            adminLoginBtn.style.display = 'none';
             logoutBtn.style.display = '';
+            
+            // 관리자 여부는 로그인 방법에 따라 결정되므로 state.isAdmin 사용
+            updateAdminBadge(state.isAdmin);
+            
+            // 관리자 링크 표시/숨김
+            if (adminLink) {
+                adminLink.style.display = state.isAdmin ? '' : 'none';
+            }
         } else {
             loginBtn.style.display = '';
+            adminLoginBtn.style.display = '';
             logoutBtn.style.display = 'none';
+            state.isAdmin = false;
+            updateAdminBadge(false);
+            
+            if (adminLink) {
+                adminLink.style.display = 'none';
+            }
         }
     }
-    updateButtons();
+
+    function updateAdminBadge(isAdmin) {
+        // 기존 관리자 배지 제거
+        const existingBadge = document.getElementById('adminBadge');
+        if (existingBadge) {
+            existingBadge.remove();
+        }
+
+        if (isAdmin && state.session) {
+            // 관리자 배지 생성
+            const adminBadge = document.createElement('span');
+            adminBadge.id = 'adminBadge';
+            adminBadge.className = 'admin-badge';
+            adminBadge.textContent = '👑 관리자';
+            adminBadge.title = '관리자 계정';
+            
+            // 로그아웃 버튼 앞에 배지 추가
+            logoutBtn.parentNode.insertBefore(adminBadge, logoutBtn);
+        }
+    }
+    
+    // 초기 버튼 상태 업데이트 (비동기 처리)
+    updateButtons().catch(() => {});
 
     loginBtn.addEventListener('click', () => {
         isSignup = false;
@@ -57,10 +154,40 @@ function setupAuthUI() {
         toggleAuthMode.textContent = '회원가입';
         authDialog.showModal();
     });
+
+    adminLoginBtn.addEventListener('click', () => {
+        adminAuthDialog.showModal();
+    });
+
+    adminAuthClose.addEventListener('click', () => {
+        adminAuthDialog.close();
+    });
+
+    // 관리자 다이얼로그의 비밀번호 표시/숨기기 토글
+    const adminPasswordToggle = adminAuthDialog.querySelector('.password-toggle');
+    if (adminPasswordToggle) {
+        adminPasswordToggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            const input = document.getElementById('adminAuthPassword');
+            const eyeIcon = adminPasswordToggle.querySelector('.eye-icon');
+            const eyeOffIcon = adminPasswordToggle.querySelector('.eye-off-icon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                if (eyeIcon) eyeIcon.style.display = 'none';
+                if (eyeOffIcon) eyeOffIcon.style.display = 'block';
+            } else {
+                input.type = 'password';
+                if (eyeIcon) eyeIcon.style.display = 'block';
+                if (eyeOffIcon) eyeOffIcon.style.display = 'none';
+            }
+        });
+    }
     logoutBtn.addEventListener('click', async () => {
         await state.supabase.auth.signOut();
         state.session = null;
-        updateButtons();
+        state.isAdmin = false;
+        localStorage.removeItem('isAdmin');  // 로그아웃 시 관리자 상태 제거
+        await updateButtons();
         navigateTo('#/');
     });
     authClose.addEventListener('click', () => authDialog.close());
@@ -86,14 +213,17 @@ function setupAuthUI() {
         }
         try {
             if (isSignup) {
+                // 일반 회원가입은 항상 일반 사용자로 처리
                 const { data: signUpData, error: signUpError } = await state.supabase.auth.signUp({ email, password });
                 if (signUpError) throw signUpError;
                 // 일부 설정에서는 즉시 세션이 생기지 않고 이메일 확인이 필요함
                 if (signUpData.session) {
                     state.session = signUpData.session;
+                    state.isAdmin = false;  // 일반 회원가입 창에서는 관리자로 인식 안 함
+                    localStorage.setItem('isAdmin', 'false');  // 일반 사용자 상태 저장
                     try { await ensureProfile(); } catch(_) {}
                     authDialog.close();
-                    updateButtons();
+                    await updateButtons();
                     navigateTo('#/');
                 } else {
                     // 이메일 확인이 필요한 경우 자동 로그인 시도
@@ -106,19 +236,26 @@ function setupAuthUI() {
                         toggleAuthMode.textContent = '회원가입';
                     } else {
                         state.session = signInData.session;
+                        state.isAdmin = false;  // 일반 회원가입 창에서는 관리자로 인식 안 함
+                        localStorage.setItem('isAdmin', 'false');  // 일반 사용자 상태 저장
                         try { await ensureProfile(); } catch(_) {}
                         authDialog.close();
-                        updateButtons();
+                        await updateButtons();
                         navigateTo('#/');
                     }
                 }
             } else {
+                // 일반 로그인 (관리자 이메일이어도 일반 사용자로 처리)
                 const { data, error } = await state.supabase.auth.signInWithPassword({ email, password });
                 if (error) throw error;
+                
+                // 일반 로그인 창을 통한 로그인은 항상 일반 사용자로 처리
                 state.session = data.session;
+                state.isAdmin = false;  // 일반 로그인 창에서는 관리자로 인식 안 함
+                localStorage.setItem('isAdmin', 'false');  // 일반 사용자 상태 저장
                 try { await ensureProfile(); } catch(_) {}
                 authDialog.close();
-                updateButtons();
+                await updateButtons();
                 navigateTo('#/');
             }
         } catch (err) {
@@ -128,7 +265,7 @@ function setupAuthUI() {
 
     state.supabase.auth.onAuthStateChange(async (_event, session) => {
         state.session = session;
-        updateButtons();
+        await updateButtons();
         if (session?.user) {
             try { await ensureProfile(); } catch (_) {}
         }
@@ -153,6 +290,61 @@ function setupAuthUI() {
             }
         });
     });
+
+    // 관리자 로그인 폼 제출
+    adminAuthForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = adminAuthEmail.value.trim();
+        const password = adminAuthPassword.value;
+        
+        if (!email || !password) {
+            alert('이메일과 비밀번호를 입력해주세요.');
+            return;
+        }
+
+        // 관리자 로그인 창에서는 관리자 체크
+        const adminCheck = await isAdmin(email);
+        if (!adminCheck) {
+            alert('관리자만 로그인할 수 있습니다.\n\n관리자 이메일로만 접근 가능합니다.');
+            return;
+        }
+
+        adminAuthSubmit.disabled = true;
+        adminAuthSubmit.textContent = '로그인 중...';
+
+        try {
+            const { data, error } = await state.supabase.auth.signInWithPassword({ email, password });
+            
+            adminAuthSubmit.disabled = false;
+            adminAuthSubmit.textContent = '로그인';
+
+            if (error) {
+                alert(translateError(error) || '로그인에 실패했습니다.');
+                return;
+            }
+
+            // 로그인 성공 후 다시 한 번 관리자 체크 (보안 강화)
+            const finalAdminCheck = await isAdmin(data.session.user.email);
+            if (!finalAdminCheck) {
+                await state.supabase.auth.signOut();
+                alert('관리자 권한이 없습니다.');
+                return;
+            }
+
+            // 관리자 로그인 창을 통한 로그인은 관리자로 인식
+            state.session = data.session;
+            state.isAdmin = true;  // 관리자 로그인 창을 통해 로그인했으므로 관리자로 설정
+            localStorage.setItem('isAdmin', 'true');  // 관리자 상태 저장
+            try { await ensureProfile(); } catch(_) {}
+            adminAuthDialog.close();
+            await updateButtons();
+            navigateTo('#/');
+        } catch (err) {
+            adminAuthSubmit.disabled = false;
+            adminAuthSubmit.textContent = '로그인';
+            alert(translateError(err) || '오류가 발생했습니다.');
+        }
+    });
 }
 
 // 라우팅
@@ -160,9 +352,11 @@ const routes = {
     '#/': renderHome,
     '#/requests': renderRequests,
     '#/new-request': renderNewRequest,
+    '#/search': renderSearch,
     '#/profile': renderProfile,
     '#/customer': renderCustomer,
     '#/report': renderReport,
+    '#/admin': renderAdmin,
 };
 
 function setupRouting() {
@@ -181,10 +375,37 @@ function navigateTo(hash) {
 function handleRoute() {
     const app = document.getElementById('app');
     const hash = location.hash || '#/';
-    const page = routes[hash] || routes['#/'];
+    const hashPath = hash.split('?')[0]; // 쿼리 파라미터 제거
+    
+    // 동적 라우트 처리 (#/user/... 형태)
+    if (hashPath.startsWith('#/user/')) {
+        const userId = hashPath.replace('#/user/', '');
+        if (userId) {
+            renderUserProfile(app, userId).catch((e) => {
+                app.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(e))}</p></div>`;
+            });
+            updateActiveNav('#/search'); // 검색 페이지를 활성화로 표시
+            return;
+        }
+    }
+    
+    // 의뢰 신청자 목록 페이지 (#/requests/:id/applications)
+    if (hashPath.match(/^#\/requests\/[^\/]+\/applications$/)) {
+        const match = hashPath.match(/^#\/requests\/([^\/]+)\/applications$/);
+        if (match && match[1]) {
+            const requestId = match[1];
+            renderRequestApplications(app, requestId).catch((e) => {
+                app.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(e))}</p></div>`;
+            });
+            updateActiveNav('#/requests');
+            return;
+        }
+    }
+    
+    const page = routes[hashPath] || routes['#/'];
     
     // 활성화된 네비게이션 링크 표시
-    updateActiveNav(hash);
+    updateActiveNav(hashPath);
     
     page(app).catch((e) => {
         app.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(e))}</p></div>`;
@@ -323,7 +544,8 @@ async function renderRequests(root) {
         document.querySelectorAll('[data-action="view-comments"]').forEach((btn) => btn.addEventListener('click', onClickViewComments));
         document.querySelectorAll('[data-action="view-reviews"]').forEach((btn) => btn.addEventListener('click', onClickViewReviews));
         document.querySelectorAll('[data-action="review"]').forEach((btn) => btn.addEventListener('click', onClickReview));
-        document.querySelectorAll('[data-action="report-user"]').forEach((btn) => btn.addEventListener('click', onClickReportUser));
+        document.querySelectorAll('[data-action="apply-request"]').forEach((btn) => btn.addEventListener('click', onClickApplyRequest));
+        document.querySelectorAll('[data-action="view-applications"]').forEach((btn) => btn.addEventListener('click', onClickViewApplications));
         document.querySelectorAll('[data-action="delete"]').forEach((btn) => btn.addEventListener('click', onClickDelete));
     }
 
@@ -345,9 +567,10 @@ async function renderRequests(root) {
         <div class="row">
           <button class="btn" data-action="view-comments" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">댓글 보기</button>
           <button class="btn" data-action="view-reviews" data-user-id="${item.owner_user_id}" data-user-handle="${handle}">작성자 리뷰</button>
-          <button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>
-          <button class="btn" data-action="report-user" data-user-id="${item.owner_user_id}" data-user-handle="${handle}">작성자 신고</button>
-          ${isOwner ? `<button class="btn btn-danger" data-action="delete" data-id="${item.id}" data-title="${escapeHtml(item.title)}">삭제</button>` : ''}
+          ${!isOwner && state.session ? `<button class="btn btn-primary" data-action="apply-request" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">의뢰 받기</button>` : ''}
+          ${!isOwner && state.session ? `<button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>` : ''}
+          ${isOwner ? `<button class="btn" data-action="view-applications" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">신청자 보기</button>` : ''}
+          ${isOwner || state.isAdmin ? `<button class="btn btn-danger" data-action="delete" data-id="${item.id}" data-title="${escapeHtml(item.title)}">삭제</button>` : ''}
         </div>
       </div>
     `;
@@ -374,11 +597,81 @@ async function renderRequests(root) {
         openReviewDialog(reviewedUserId);
     }
 
-    function onClickReportUser(e) {
-        const h = e.currentTarget.getAttribute('data-user-handle');
-        const target = h || e.currentTarget.getAttribute('data-user-id');
-        state.pendingReportTarget = target;
-        navigateTo('#/report');
+    async function onClickApplyRequest(e) {
+        if (!state.session) {
+            alert('로그인이 필요합니다');
+            return;
+        }
+        const requestId = e.currentTarget.getAttribute('data-request-id');
+        const requestTitle = e.currentTarget.getAttribute('data-request-title');
+        
+        // 이미 신청했는지 확인
+        const { data: existing } = await state.supabase
+            .from('request_applications')
+            .select('id, status')
+            .eq('request_id', requestId)
+            .eq('applicant_user_id', state.session.user.id)
+            .maybeSingle();
+        
+        if (existing) {
+            if (existing.status === 'accepted') {
+                alert('이미 수락된 의뢰입니다.');
+            } else if (existing.status === 'pending') {
+                alert('이미 신청한 의뢰입니다.\n의뢰 작성자가 수락할 때까지 기다려주세요.');
+            } else if (existing.status === 'rejected') {
+                if (confirm('거절된 의뢰입니다. 다시 신청하시겠습니까?')) {
+                    const { error } = await state.supabase
+                        .from('request_applications')
+                        .update({ status: 'pending', created_at: new Date().toISOString() })
+                        .eq('id', existing.id);
+                    
+                    if (error) {
+                        alert('신청 실패: ' + translateError(error));
+                        return;
+                    }
+                    alert('의뢰 신청이 접수되었습니다.');
+                    e.currentTarget.textContent = '신청 완료';
+                    e.currentTarget.disabled = true;
+                }
+            }
+            return;
+        }
+        
+        if (!confirm(`"${requestTitle}" 의뢰를 받겠습니까?\n\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.`)) return;
+        
+        const applyBtn = e.currentTarget;
+        const originalText = applyBtn.textContent;
+        applyBtn.disabled = true;
+        applyBtn.textContent = '신청 중...';
+        
+        const { error } = await state.supabase
+            .from('request_applications')
+            .insert({
+                request_id: requestId,
+                applicant_user_id: state.session.user.id,
+                status: 'pending'
+            });
+        
+        applyBtn.disabled = false;
+        applyBtn.textContent = originalText;
+        
+        if (error) {
+            alert('신청 실패: ' + translateError(error) + '\n\n테이블이 없다면 Supabase에서 request_applications 테이블을 생성해야 합니다.');
+            return;
+        }
+        
+        alert('의뢰 신청이 접수되었습니다.\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.');
+        applyBtn.textContent = '신청 완료';
+        applyBtn.disabled = true;
+    }
+
+    function onClickViewApplications(e) {
+        if (!state.session) {
+            alert('로그인이 필요합니다');
+            return;
+        }
+        const requestId = e.currentTarget.getAttribute('data-request-id');
+        navigateTo(`#/requests/${requestId}/applications`);
     }
 
     async function onClickDelete(e) {
@@ -390,19 +683,29 @@ async function renderRequests(root) {
         const title = e.currentTarget.getAttribute('data-title') || '이 의뢰';
         if (!id) return;
         
-        if (!confirm(`정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n삭제된 의뢰는 복구할 수 없습니다.`)) return;
+        const isAdminDelete = state.isAdmin;
+        const confirmMsg = isAdminDelete 
+            ? `정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)`
+            : `정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n삭제된 의뢰는 복구할 수 없습니다.`;
+        
+        if (!confirm(confirmMsg)) return;
         
         const deleteBtn = e.currentTarget;
         const originalText = deleteBtn.textContent;
         deleteBtn.disabled = true;
         deleteBtn.textContent = '삭제 중...';
         
-        const { error } = await state.supabase
+        let query = state.supabase
             .from('requests')
             .delete()
-            .eq('id', id)
-            .eq('owner_user_id', state.session.user.id)
-            .select('id');
+            .eq('id', id);
+        
+        // 관리자가 아니면 본인 의뢰만 삭제 가능
+        if (!isAdminDelete) {
+            query = query.eq('owner_user_id', state.session.user.id);
+        }
+        
+        const { error } = await query.select('id');
             
         deleteBtn.disabled = false;
         deleteBtn.textContent = originalText;
@@ -410,11 +713,16 @@ async function renderRequests(root) {
         if (error) {
             const errorMsg = translateError(error);
             const fullError = error.message || String(error);
+            console.error('의뢰 삭제 오류:', error);
             
-            if (fullError.includes('permission denied') || fullError.includes('policy')) {
-                alert('삭제 권한이 없습니다.\n\nSupabase에서 DELETE 정책을 확인해주세요.');
+            if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                if (isAdminDelete) {
+                    alert(`삭제 권한이 없습니다.\n\n관리자 권한으로 삭제하려면 Supabase에서 RLS 정책을 설정해야 합니다.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책이 있으면 삭제 후 재생성\nDROP POLICY IF EXISTS "Admins can delete any request" ON requests;\n\nCREATE POLICY "Admins can delete any request" ON requests\n  FOR DELETE USING (\n    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')\n  );`);
+                } else {
+                    alert('삭제 권한이 없습니다.\n\n본인이 작성한 의뢰만 삭제할 수 있습니다.');
+                }
             } else {
-                alert('삭제 실패: ' + errorMsg + '\n\n상세: ' + fullError);
+                alert(`삭제 실패: ${errorMsg}\n\n상세 오류:\n${fullError}\n\n콘솔에서 더 자세한 정보를 확인할 수 있습니다.`);
             }
             return;
         }
@@ -485,6 +793,847 @@ async function renderNewRequest(root) {
         }
         alert('의뢰가 등록되었습니다.');
         navigateTo('#/requests');
+    }
+}
+
+// 검색 기록 관련 함수들 (외부에서 사용)
+function getSearchHistory() {
+    try {
+        const history = localStorage.getItem('userSearchHistory');
+        return history ? JSON.parse(history) : [];
+    } catch(_) {
+        return [];
+    }
+}
+
+function saveSearchHistory(query) {
+    try {
+        let history = getSearchHistory();
+        // 중복 제거 (기존 항목 삭제 후 앞에 추가)
+        history = history.filter(term => term !== query);
+        history.unshift(query); // 앞에 추가
+        // 최대 10개까지만 저장
+        history = history.slice(0, 10);
+        localStorage.setItem('userSearchHistory', JSON.stringify(history));
+    } catch(_) {}
+}
+
+function removeFromHistory(term) {
+    try {
+        let history = getSearchHistory();
+        history = history.filter(t => t !== term);
+        localStorage.setItem('userSearchHistory', JSON.stringify(history));
+    } catch(_) {}
+}
+
+function clearSearchHistory() {
+    try {
+        localStorage.removeItem('userSearchHistory');
+    } catch(_) {}
+}
+
+// 의뢰 신청자 목록 페이지
+async function renderRequestApplications(root, requestId) {
+    if (!state.session) {
+        root.innerHTML = `<div class="card"><h3>로그인이 필요합니다</h3><p class="muted">의뢰 신청자 목록을 보려면 로그인이 필요합니다.</p></div>`;
+        return;
+    }
+
+    root.innerHTML = '<div class="card"><p class="muted" style="text-align:center;padding:20px">로딩 중...</p></div>';
+
+    try {
+        // 의뢰 정보 가져오기
+        const { data: request, error: reqErr } = await state.supabase
+            .from('requests')
+            .select('id, title, owner_user_id')
+            .eq('id', requestId)
+            .maybeSingle();
+
+        if (reqErr || !request) {
+            root.innerHTML = `<div class="card"><h3>의뢰를 찾을 수 없습니다</h3><p class="muted">${escapeHtml(translateError(reqErr))}</p></div>`;
+            return;
+        }
+
+        // 본인의 의뢰인지 확인
+        if (request.owner_user_id !== state.session.user.id && !state.isAdmin) {
+            root.innerHTML = `<div class="card"><h3>권한이 없습니다</h3><p class="muted">본인이 작성한 의뢰의 신청자만 확인할 수 있습니다.</p></div>`;
+            return;
+        }
+
+        // 신청자 목록 가져오기
+        const { data: applications, error: appErr } = await state.supabase
+            .from('request_applications')
+            .select('*')
+            .eq('request_id', requestId)
+            .order('created_at', { ascending: false });
+
+        if (appErr) {
+            const fullError = appErr.message || String(appErr);
+            if (fullError.includes('schema cache') || fullError.includes('Could not find') || fullError.includes('does not exist')) {
+                root.innerHTML = `
+                    <div class="card" style="padding:20px">
+                        <h3>테이블을 찾을 수 없습니다</h3>
+                        <p class="muted" style="margin-bottom:12px">request_applications 테이블이 필요합니다.</p>
+                        <details style="margin-top:12px">
+                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">테이블 생성 SQL 보기</summary>
+                            <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
+CREATE TABLE request_applications (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  request_id UUID NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+  applicant_user_id UUID NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_request_applications_request_id ON request_applications(request_id);
+CREATE INDEX idx_request_applications_applicant ON request_applications(applicant_user_id);
+
+ALTER TABLE request_applications ENABLE ROW LEVEL SECURITY;
+
+-- 모든 사용자가 신청 조회 가능 (본인 신청 또는 본인 의뢰)
+CREATE POLICY "Users can view own applications or requests" ON request_applications
+  FOR SELECT USING (
+    applicant_user_id = auth.uid() OR
+    EXISTS (
+      SELECT 1 FROM requests 
+      WHERE requests.id = request_applications.request_id 
+      AND requests.owner_user_id = auth.uid()
+    )
+  );
+
+-- 모든 사용자가 신청 가능
+CREATE POLICY "Anyone can apply" ON request_applications
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated' AND applicant_user_id = auth.uid());
+
+-- 의뢰 작성자만 신청 수락/거절 가능
+CREATE POLICY "Request owners can update applications" ON request_applications
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM requests 
+      WHERE requests.id = request_applications.request_id 
+      AND requests.owner_user_id = auth.uid()
+    )
+  );
+                            </pre>
+                        </details>
+                        <p class="muted" style="font-size:11px;margin-top:12px">오류: ${escapeHtml(fullError)}</p>
+                        <div class="row" style="justify-content:flex-end;margin-top:16px">
+                            <button class="btn" onclick="location.reload()">새로고침</button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                root.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(appErr))}</p></div>`;
+            }
+            return;
+        }
+
+        // 신청자 핸들 정보 가져오기
+        const applicantIds = (applications || []).map(a => a.applicant_user_id).filter(Boolean);
+        let handlesByUserId = {};
+        if (applicantIds.length > 0) {
+            try {
+                const { data: profs } = await state.supabase
+                    .from('profiles')
+                    .select('user_id, handle')
+                    .in('user_id', applicantIds);
+                (profs || []).forEach(p => {
+                    if (p.handle) handlesByUserId[p.user_id] = p.handle;
+                });
+            } catch(_) {}
+        }
+
+        const pendingApps = (applications || []).filter(a => a.status === 'pending');
+        const acceptedApps = (applications || []).filter(a => a.status === 'accepted');
+        const rejectedApps = (applications || []).filter(a => a.status === 'rejected');
+
+        root.innerHTML = `
+        <div class="card">
+          <h3>"${escapeHtml(request.title)}" 신청자</h3>
+          <div class="row" style="justify-content:flex-end;margin-top:12px">
+            <button class="btn" id="backToRequests">의뢰 리스트로 돌아가기</button>
+          </div>
+        </div>
+        ${pendingApps.length > 0 ? `
+        <div class="spacer"></div>
+        <div class="card">
+          <h3>대기 중인 신청 (${pendingApps.length})</h3>
+          <div class="list" id="pendingApplications">
+            ${pendingApps.map(app => {
+                const handle = handlesByUserId[app.applicant_user_id] || app.applicant_user_id?.slice(0, 8) || '익명';
+                const date = new Date(app.created_at).toLocaleString('ko-KR', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return `
+                    <div class="list-item">
+                        <div style="flex:1">
+                            <div style="margin-bottom:4px">
+                                <strong>${escapeHtml(handle)}</strong>
+                                <span class="muted" style="font-size:12px"> · ${date}</span>
+                            </div>
+                            <div class="chip" style="background:var(--warn);opacity:0.8">대기 중</div>
+                        </div>
+                        <div class="row" style="gap:8px">
+                            <button class="btn btn-primary" data-action="accept-application" data-app-id="${app.id}" data-applicant-id="${app.applicant_user_id}" data-applicant-handle="${escapeHtml(handle)}">수락</button>
+                            <button class="btn" data-action="reject-application" data-app-id="${app.id}">거절</button>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+          </div>
+        </div>
+        ` : ''}
+        ${acceptedApps.length > 0 ? `
+        <div class="spacer"></div>
+        <div class="card">
+          <h3>수락된 신청 (${acceptedApps.length})</h3>
+          <div class="list" id="acceptedApplications">
+            ${acceptedApps.map(app => {
+                const handle = handlesByUserId[app.applicant_user_id] || app.applicant_user_id?.slice(0, 8) || '익명';
+                const date = new Date(app.created_at).toLocaleString('ko-KR', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return `
+                    <div class="list-item">
+                        <div style="flex:1">
+                            <div style="margin-bottom:4px">
+                                <strong>${escapeHtml(handle)}</strong>
+                                <span class="muted" style="font-size:12px"> · ${date}</span>
+                            </div>
+                            <div class="chip" style="background:var(--primary);opacity:0.8">수락됨</div>
+                        </div>
+                        <button class="btn" data-action="view-applicant-profile" data-user-id="${app.applicant_user_id}">프로필 보기</button>
+                    </div>
+                `;
+            }).join('')}
+          </div>
+        </div>
+        ` : ''}
+        ${rejectedApps.length > 0 ? `
+        <div class="spacer"></div>
+        <div class="card">
+          <h3>거절된 신청 (${rejectedApps.length})</h3>
+          <div class="list" id="rejectedApplications">
+            ${rejectedApps.map(app => {
+                const handle = handlesByUserId[app.applicant_user_id] || app.applicant_user_id?.slice(0, 8) || '익명';
+                const date = new Date(app.created_at).toLocaleString('ko-KR', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return `
+                    <div class="list-item">
+                        <div style="flex:1">
+                            <div style="margin-bottom:4px">
+                                <strong>${escapeHtml(handle)}</strong>
+                                <span class="muted" style="font-size:12px"> · ${date}</span>
+                            </div>
+                            <div class="chip muted">거절됨</div>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+          </div>
+        </div>
+        ` : ''}
+        ${applications.length === 0 ? `
+        <div class="spacer"></div>
+        <div class="card">
+          <p class="muted" style="text-align:center;padding:20px">아직 신청자가 없습니다.</p>
+        </div>
+        ` : ''}
+      `;
+
+        // 뒤로 가기 버튼
+        document.getElementById('backToRequests').addEventListener('click', () => {
+            navigateTo('#/requests');
+        });
+
+        // 수락 버튼
+        document.querySelectorAll('[data-action="accept-application"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const appId = e.target.getAttribute('data-app-id');
+                const applicantId = e.target.getAttribute('data-applicant-id');
+                const applicantHandle = e.target.getAttribute('data-applicant-handle');
+                
+                if (!confirm(`"${escapeHtml(applicantHandle)}"님의 신청을 수락하시겠습니까?\n\n수락하면 다른 대기 중인 신청은 자동으로 거절됩니다.`)) return;
+                
+                const acceptBtn = e.target;
+                const originalText = acceptBtn.textContent;
+                acceptBtn.disabled = true;
+                acceptBtn.textContent = '처리 중...';
+                
+                try {
+                    // 모든 대기 중인 신청을 거절 (현재 신청 제외)
+                    await state.supabase
+                        .from('request_applications')
+                        .update({ status: 'rejected' })
+                        .eq('request_id', requestId)
+                        .eq('status', 'pending')
+                        .neq('id', appId);
+                    
+                    // 현재 신청 수락
+                    const { error } = await state.supabase
+                        .from('request_applications')
+                        .update({ status: 'accepted' })
+                        .eq('id', appId);
+                    
+                    if (error) {
+                        alert('수락 실패: ' + translateError(error));
+                        acceptBtn.disabled = false;
+                        acceptBtn.textContent = originalText;
+                        return;
+                    }
+                    
+                    alert('의뢰 신청이 수락되었습니다.');
+                    // 페이지 새로고침
+                    renderRequestApplications(root, requestId);
+                } catch (err) {
+                    alert('오류 발생: ' + translateError(err));
+                    acceptBtn.disabled = false;
+                    acceptBtn.textContent = originalText;
+                }
+            });
+        });
+
+        // 거절 버튼
+        document.querySelectorAll('[data-action="reject-application"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const appId = e.target.getAttribute('data-app-id');
+                
+                if (!confirm('이 신청을 거절하시겠습니까?')) return;
+                
+                const rejectBtn = e.target;
+                const originalText = rejectBtn.textContent;
+                rejectBtn.disabled = true;
+                rejectBtn.textContent = '처리 중...';
+                
+                const { error } = await state.supabase
+                    .from('request_applications')
+                    .update({ status: 'rejected' })
+                    .eq('id', appId);
+                
+                rejectBtn.disabled = false;
+                rejectBtn.textContent = originalText;
+                
+                if (error) {
+                    alert('거절 실패: ' + translateError(error));
+                    return;
+                }
+                
+                alert('의뢰 신청이 거절되었습니다.');
+                // 페이지 새로고침
+                renderRequestApplications(root, requestId);
+            });
+        });
+
+        // 프로필 보기 버튼
+        document.querySelectorAll('[data-action="view-applicant-profile"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const userId = e.target.getAttribute('data-user-id');
+                navigateTo(`#/user/${userId}`);
+            });
+        });
+    } catch (err) {
+        root.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(err))}</p></div>`;
+    }
+}
+
+// 사용자 검색
+async function renderSearch(root) {
+    // 검색 기록 불러오기
+    const searchHistory = getSearchHistory();
+    
+    root.innerHTML = `
+    <div class="card">
+      <h3>사용자 검색</h3>
+      <div class="grid">
+        <div class="field">
+          <label>검색어 (핸들, 이메일, 사용자 ID)</label>
+          <input id="searchQuery" placeholder="사용자 핸들이나 이메일을 입력하세요" style="width:100%">
+        </div>
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn btn-primary" id="searchBtn">검색</button>
+        </div>
+      </div>
+      ${searchHistory.length > 0 ? `
+      <div class="spacer"></div>
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="font-size:13px;color:var(--muted)">최근 검색어</label>
+          <button class="btn" id="clearHistory" style="height:24px;padding:2px 8px;font-size:11px">전체 삭제</button>
+        </div>
+        <div class="row wrap" style="gap:6px" id="searchHistoryList">
+          ${searchHistory.map(term => `
+            <button class="chip" data-history-term="${escapeHtml(term)}" style="cursor:pointer;font-size:12px;padding:4px 10px">
+              ${escapeHtml(term)}
+              <span style="margin-left:6px;opacity:0.6">×</span>
+            </button>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+    </div>
+    <div class="spacer"></div>
+    <div class="card">
+      <h3>검색 결과</h3>
+      <div id="searchResults" class="list">
+        <p class="muted" style="text-align:center;padding:20px">검색어를 입력하고 검색 버튼을 클릭하세요.</p>
+      </div>
+    </div>
+  `;
+
+    const searchQuery = document.getElementById('searchQuery');
+    const searchBtn = document.getElementById('searchBtn');
+    const searchResults = document.getElementById('searchResults');
+
+    // 검색 기록 클릭 이벤트
+    const historyList = document.getElementById('searchHistoryList');
+    if (historyList) {
+        historyList.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-history-term]');
+            if (!btn) return;
+            
+            const term = btn.getAttribute('data-history-term');
+            // × 클릭 시 삭제
+            if (e.target.textContent === '×' || e.target.tagName === 'SPAN') {
+                removeFromHistory(term);
+                btn.remove();
+                // 검색 기록이 모두 삭제되면 섹션도 제거
+                const remaining = historyList.querySelectorAll('[data-history-term]');
+                if (remaining.length === 0) {
+                    const card = historyList.closest('.card');
+                    const historySection = historyList.closest('.spacer')?.previousElementSibling || 
+                                         (historyList.parentElement.parentElement);
+                    if (historySection && historySection !== card) {
+                        historySection.remove();
+                    }
+                    historyList.parentElement.remove();
+                }
+            } else {
+                // 검색어 클릭 시 검색 실행
+                searchQuery.value = term;
+                performSearch();
+            }
+        });
+    }
+
+    // 전체 삭제 버튼
+    const clearHistoryBtn = document.getElementById('clearHistory');
+    if (clearHistoryBtn) {
+        clearHistoryBtn.addEventListener('click', () => {
+            if (confirm('검색 기록을 모두 삭제하시겠습니까?')) {
+                clearSearchHistory();
+                const historySection = clearHistoryBtn.closest('.spacer')?.previousElementSibling;
+                if (historySection && historySection.id !== 'searchQuery') {
+                    const spacer = clearHistoryBtn.closest('.spacer');
+                    if (spacer) spacer.remove();
+                    if (historySection && !historySection.classList.contains('card')) {
+                        historySection.remove();
+                    }
+                }
+                const historyContainer = clearHistoryBtn.closest('div')?.parentElement;
+                if (historyContainer && historyContainer !== searchQuery.parentElement) {
+                    const spacer = document.createElement('div');
+                    spacer.className = 'spacer';
+                    historyContainer.replaceWith(spacer);
+                }
+                // 페이지 새로고침으로 깔끔하게 처리
+                renderSearch(root);
+            }
+        });
+    }
+
+    async function performSearch() {
+        const query = searchQuery.value.trim();
+        if (!query) {
+            alert('검색어를 입력해주세요.');
+            return;
+        }
+
+        // 검색 기록 저장
+        saveSearchHistory(query);
+
+        searchBtn.disabled = true;
+        searchBtn.textContent = '검색 중...';
+        searchResults.innerHTML = '<p class="muted" style="text-align:center;padding:20px">검색 중...</p>';
+
+        try {
+            // profiles 테이블에서 핸들 또는 이메일로 검색
+            let profiles = null;
+            let error = null;
+            
+            // 먼저 profiles 테이블에서 검색 시도 (handle만 검색)
+            const result = await state.supabase
+                .from('profiles')
+                .select('user_id, handle')
+                .ilike('handle', `%${query}%`)
+                .limit(50);
+            
+            profiles = result.data;
+            error = result.error;
+
+            // profiles 테이블에서 결과가 없거나 에러 발생 시 user_profiles_view에서 이메일 검색 시도
+            if ((error && (error.message?.includes('schema cache') || error.message?.includes('Could not find') || error.message?.includes('does not exist') || error.message?.includes('permission denied') || error.message?.includes('policy') || error.message?.includes('does not exist'))) || (!profiles || profiles.length === 0)) {
+                console.warn('profiles 테이블에서 검색 결과 없음 또는 오류, user_profiles_view로 이메일 검색 시도');
+                
+                // user_profiles_view에서 이메일 검색 시도
+                const viewResult = await state.supabase
+                    .from('user_profiles_view')
+                    .select('user_id, email')
+                    .ilike('email', `%${query}%`)
+                    .limit(50);
+                
+                if (!viewResult.error && viewResult.data && viewResult.data.length > 0) {
+                    // user_profiles_view 결과와 기존 profiles 결과 병합
+                    const existingUserIds = new Set((profiles || []).map(p => p.user_id));
+                    const viewProfiles = viewResult.data
+                        .filter(u => !existingUserIds.has(u.user_id))
+                        .map(u => ({
+                            user_id: u.user_id,
+                            handle: null,
+                            email: u.email
+                        }));
+                    
+                    profiles = [...(profiles || []), ...viewProfiles];
+                    error = null;
+                }
+            }
+
+            if (error) {
+                const errorMsg = translateError(error);
+                const fullError = error.message || String(error);
+                console.error('사용자 검색 오류:', error);
+                
+                if (fullError.includes('schema cache') || fullError.includes('Could not find') || fullError.includes('does not exist')) {
+                    searchResults.innerHTML = `
+                        <div class="card" style="padding:20px;text-align:center">
+                            <p class="muted" style="margin-bottom:12px;color:var(--warn);font-size:16px;font-weight:600">⚠️ profiles 테이블에 접근할 수 없습니다</p>
+                            
+                            <div style="background:#1a1f2e;padding:16px;border-radius:8px;margin:16px 0;text-align:left">
+                                <p style="margin-bottom:12px;font-weight:600;color:var(--text)">🔍 Supabase 대시보드에서 확인할 사항:</p>
+                                <ol style="text-align:left;font-size:13px;color:var(--muted);padding-left:24px;margin:0;line-height:1.8">
+                                    <li>Supabase 대시보드 → <strong>Table Editor</strong>로 이동</li>
+                                    <li>'<strong>profiles</strong>' 테이블이 있는지 확인</li>
+                                    <li>테이블이 <strong>없다면</strong>: 아래 "테이블 생성 SQL" 실행</li>
+                                    <li>테이블이 <strong>있다면</strong>: 아래 "RLS 정책 설정 SQL" 실행</li>
+                                </ol>
+                            </div>
+                            
+                            <details style="margin-top:12px;text-align:left">
+                                <summary style="cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;padding:8px;background:#1a1f2e;border-radius:4px">📋 테이블 생성 SQL (테이블이 없는 경우)</summary>
+                                <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px;border:1px solid var(--border)">
+-- profiles 테이블 생성 (테이블이 없는 경우만 실행)
+CREATE TABLE IF NOT EXISTS profiles (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  handle TEXT UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_profiles_handle ON profiles(handle);
+
+-- 참고: email은 auth.users에 이미 있으므로 profiles 테이블에 추가하지 않습니다.
+-- 이메일 정보는 user_profiles_view를 통해 조회할 수 있습니다.
+
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- 모든 사용자가 profiles 조회 가능
+CREATE POLICY "Anyone can view profiles" ON profiles
+  FOR SELECT USING (true);
+
+-- 본인 프로필만 수정 가능
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- 본인 프로필만 삽입 가능
+CREATE POLICY "Users can insert own profile" ON profiles
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+                                </pre>
+                            </details>
+                            
+                            <details style="margin-top:12px;text-align:left">
+                                <summary style="cursor:pointer;color:var(--primary);font-size:13px;font-weight:600;padding:8px;background:#1a1f2e;border-radius:4px">🔐 RLS 정책 설정 SQL (테이블이 이미 있는 경우)</summary>
+                                <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px;border:1px solid var(--border)">
+-- 1. 기존 정책 삭제 (안전하게 처리)
+DROP POLICY IF EXISTS "Anyone can view profiles" ON profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
+
+-- 2. RLS 활성화 (이미 활성화되어 있어도 안전)
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- 3. 모든 사용자가 profiles 조회 가능하도록 정책 생성
+CREATE POLICY "Anyone can view profiles" ON profiles
+  FOR SELECT USING (true);
+
+-- 4. 본인 프로필 수정/삽입 정책
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own profile" ON profiles
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+                                </pre>
+                            </details>
+                            
+                            <div style="margin-top:16px;padding:12px;background:#1a1f2e;border-radius:8px">
+                                <p style="margin-bottom:8px;font-weight:600;color:var(--text)">💡 해결 방법:</p>
+                                <ol style="text-align:left;font-size:12px;color:var(--muted);padding-left:20px;margin:0;line-height:1.6">
+                                    <li>위의 SQL 중 하나를 Supabase <strong>SQL Editor</strong>에서 실행</li>
+                                    <li>Supabase 대시보드를 <strong>새로고침</strong> (F5)</li>
+                                    <li>이 페이지를 새로고침하고 다시 검색 시도</li>
+                                    <li>여전히 오류가 발생하면 브라우저 콘솔(F12) 확인</li>
+                                </ol>
+                            </div>
+                            
+                            <details style="margin-top:12px;text-align:left">
+                                <summary style="cursor:pointer;color:var(--muted);font-size:11px">오류 상세 정보 보기</summary>
+                                <p class="muted" style="font-size:11px;margin-top:8px;word-break:break-all;padding:8px;background:#0c111a;border-radius:4px">${escapeHtml(fullError)}</p>
+                            </details>
+                        </div>
+                    `;
+                } else if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                    searchResults.innerHTML = `
+                        <div class="card" style="padding:20px;text-align:center">
+                            <p class="muted" style="margin-bottom:12px;color:var(--warn)">⚠️ 권한이 없습니다</p>
+                            <p class="muted" style="font-size:12px;margin-bottom:8px">profiles 테이블 조회 권한이 필요합니다.</p>
+                            <details style="margin-top:12px;text-align:left">
+                                <summary style="cursor:pointer;color:var(--primary);font-size:12px">RLS 정책 설정 SQL 보기</summary>
+                                <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
+-- 모든 사용자가 profiles 조회 가능
+CREATE POLICY "Anyone can view profiles" ON profiles
+  FOR SELECT USING (true);
+                                </pre>
+                            </details>
+                            <p class="muted" style="font-size:11px;margin-top:12px">오류 상세: ${escapeHtml(fullError)}</p>
+                        </div>
+                    `;
+                } else {
+                    searchResults.innerHTML = `<p class="muted">검색 실패: ${escapeHtml(errorMsg)}</p><p class="muted" style="font-size:11px;margin-top:8px">${escapeHtml(fullError)}</p>`;
+                }
+                return;
+            }
+
+            if (!profiles || profiles.length === 0) {
+                searchResults.innerHTML = '<p class="muted" style="text-align:center;padding:20px">검색 결과가 없습니다.</p>';
+                return;
+            }
+
+            // 사용자 프로필 정보 가져오기
+            const userIds = profiles.map(p => p.user_id);
+            const { data: userProfiles } = await state.supabase
+                .from('user_profiles_view')
+                .select('user_id, avg_rating')
+                .in('user_id', userIds);
+
+            const ratingMap = {};
+            (userProfiles || []).forEach(up => {
+                ratingMap[up.user_id] = up.avg_rating ? Number(up.avg_rating).toFixed(1) : '-';
+            });
+
+            // 프로필 정보 보강 (이메일 정보 가져오기)
+            const profileUserIds = profiles.map(p => p.user_id);
+            let emailsByUserId = {};
+            if (profileUserIds.length > 0) {
+                try {
+                    const { data: viewData } = await state.supabase
+                        .from('user_profiles_view')
+                        .select('user_id, email')
+                        .in('user_id', profileUserIds);
+                    (viewData || []).forEach(v => {
+                        if (v.email) emailsByUserId[v.user_id] = v.email;
+                    });
+                } catch(_) {}
+            }
+
+            searchResults.innerHTML = profiles.map(profile => {
+                const rating = ratingMap[profile.user_id] || '-';
+                const email = profile.email || emailsByUserId[profile.user_id] || null;
+                const handle = profile.handle || email || profile.user_id?.slice(0, 8) || '익명';
+                return `
+                    <div class="list-item">
+                        <div style="flex:1">
+                            <div style="margin-bottom:4px">
+                                <strong>${escapeHtml(handle)}</strong>
+                                ${profile.handle ? '' : '<span class="muted" style="font-size:12px"> (핸들 없음)</span>'}
+                            </div>
+                            ${email ? `<div class="muted" style="font-size:12px;margin-bottom:4px">${escapeHtml(email)}</div>` : ''}
+                            <div class="row" style="gap:8px">
+                                <span class="chip"><span class="rating">★</span> ${rating}</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" data-action="view-profile" data-user-id="${profile.user_id}" data-user-handle="${escapeHtml(handle)}">프로필 보기</button>
+                    </div>
+                `;
+            }).join('');
+
+            // 프로필 보기 버튼 이벤트
+            searchResults.querySelectorAll('[data-action="view-profile"]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const userId = e.target.getAttribute('data-user-id');
+                    if (userId) {
+                        navigateTo(`#/user/${userId}`);
+                    }
+                });
+            });
+        } catch (err) {
+            searchResults.innerHTML = `<p class="muted">검색 중 오류가 발생했습니다: ${escapeHtml(translateError(err))}</p>`;
+        } finally {
+            searchBtn.disabled = false;
+            searchBtn.textContent = '검색';
+        }
+    }
+
+    searchBtn.addEventListener('click', performSearch);
+    searchQuery.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            performSearch();
+        }
+    });
+}
+
+// 사용자 프로필 보기 (다른 사용자)
+async function renderUserProfile(root, userId) {
+    if (!userId) {
+        root.innerHTML = `<div class="card"><h3>사용자를 찾을 수 없습니다</h3><p class="muted">사용자 ID가 올바르지 않습니다.</p></div>`;
+        return;
+    }
+
+    root.innerHTML = '<div class="card"><p class="muted" style="text-align:center;padding:20px">프로필 로딩 중...</p></div>';
+
+    try {
+        const { data: profile, error: pErr } = await state.supabase
+            .from('user_profiles_view')
+            .select('*')
+            .eq('user_id', userId)
+            .maybeSingle();
+
+        if (pErr) {
+            root.innerHTML = `<div class="card"><p class="muted">프로필 로딩 실패: ${escapeHtml(translateError(pErr))}</p></div>`;
+            return;
+        }
+
+        if (!profile) {
+            root.innerHTML = `<div class="card"><h3>사용자를 찾을 수 없습니다</h3><p class="muted">해당 사용자의 프로필이 존재하지 않습니다.</p></div>`;
+            return;
+        }
+
+        const { data: reviews, error: rErr } = await state.supabase
+            .from('reviews_view')
+            .select('*')
+            .eq('reviewed_user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(20);
+
+        if (rErr) {
+            root.innerHTML = `<div class="card"><p class="muted">리뷰 로딩 실패: ${escapeHtml(translateError(rErr))}</p></div>`;
+            return;
+        }
+
+        // 프로필 정보 가져오기 (핸들)
+        const { data: profileInfo } = await state.supabase
+            .from('profiles')
+            .select('handle')
+            .eq('user_id', userId)
+            .maybeSingle();
+        
+        // 이메일 정보는 user_profiles_view에서 가져오기
+        let userEmail = null;
+        try {
+            const { data: emailData } = await state.supabase
+                .from('user_profiles_view')
+                .select('email')
+                .eq('user_id', userId)
+                .maybeSingle();
+            userEmail = emailData?.email || null;
+        } catch(_) {}
+
+        const handle = profileInfo?.handle || userEmail || userId.slice(0, 8);
+        const avg = profile?.avg_rating ? Number(profile.avg_rating).toFixed(1) : '-';
+        const isOwnProfile = state.session && state.session.user.id === userId;
+
+        root.innerHTML = `
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h3 style="margin:0">${escapeHtml(handle)}의 프로필</h3>
+            ${state.session && !isOwnProfile ? `<button class="btn" id="reportUserProfile" style="height:32px;padding:6px 12px;font-size:13px">신고</button>` : ''}
+          </div>
+          <div class="row" style="gap:10px">
+            ${userEmail ? `<span class="chip">${escapeHtml(userEmail)}</span>` : ''}
+            <span class="chip"><span class="rating">★</span> ${avg}</span>
+            ${isOwnProfile ? '<span class="chip" style="background:var(--primary);color:#0b1020">내 프로필</span>' : ''}
+          </div>
+        </div>
+        ${state.session && !isOwnProfile ? `
+        <div class="spacer"></div>
+        <div class="card">
+          <h3>리뷰 남기기</h3>
+          <p class="muted">이 사용자에게 리뷰를 남길 수 있습니다.</p>
+          <div class="row" style="justify-content:flex-end">
+            <button class="btn btn-primary" id="openReviewForUser">리뷰 작성</button>
+          </div>
+        </div>
+        ` : ''}
+        <div class="spacer"></div>
+        <div class="card">
+          <h3>받은 리뷰</h3>
+          <div class="list">${(reviews || []).map(renderReviewItem).join('') || '<p class="muted">아직 리뷰가 없습니다.</p>'}</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn" id="backToSearch">검색으로 돌아가기</button>
+        </div>
+      `;
+
+        function renderReviewItem(rv) {
+            return `
+          <div class="list-item">
+            <div>
+              <div><span class="rating">★</span> ${Number(rv.rating).toFixed(1)} · <span class="muted">by ${escapeHtml(rv.reviewer_email || rv.reviewer_user_id)}</span></div>
+              <div class="muted">${escapeHtml(rv.comment || '')}</div>
+            </div>
+            <div class="muted" style="font-size:12px">${new Date(rv.created_at).toLocaleString()}</div>
+          </div>
+        `;
+        }
+
+        if (!isOwnProfile && state.session) {
+            const openReviewBtn = document.getElementById('openReviewForUser');
+            if (openReviewBtn) {
+                openReviewBtn.addEventListener('click', () => {
+                    openReviewDialog(userId);
+                });
+            }
+            
+            const reportBtn = document.getElementById('reportUserProfile');
+            if (reportBtn) {
+                reportBtn.addEventListener('click', () => {
+                    const target = handle || userId;
+                    state.pendingReportTarget = target;
+                    navigateTo('#/report');
+                });
+            }
+        }
+
+        const backBtn = document.getElementById('backToSearch');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                navigateTo('#/search');
+            });
+        }
+    } catch (err) {
+        root.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(err))}</p></div>`;
     }
 }
 
@@ -601,6 +1750,511 @@ async function renderCustomer(root) {
         alert('문의가 접수되었습니다.');
         navigateTo('#/');
     });
+}
+
+// 관리자 페이지
+async function renderAdmin(root) {
+    if (!state.session) {
+        root.innerHTML = `<div class="card"><h3>로그인이 필요합니다</h3><p class="muted">관리자 페이지는 로그인 후 이용할 수 있어요.</p></div>`;
+        return;
+    }
+    
+    if (!state.isAdmin) {
+        root.innerHTML = `<div class="card"><h3>권한이 없습니다</h3><p class="muted">관리자만 접근할 수 있는 페이지입니다.</p></div>`;
+        return;
+    }
+
+    root.innerHTML = `
+    <div class="card">
+      <h3>👑 관리자 페이지</h3>
+      <p class="muted">모든 의뢰, 댓글, 고객센터 문의, 신고를 관리할 수 있습니다.</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="card">
+      <h3>전체 의뢰 목록</h3>
+      <div class="list" id="adminRequestsList"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="card">
+      <h3>전체 댓글 관리</h3>
+      <div class="list" id="adminCommentsList"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="card">
+      <h3>고객센터 문의</h3>
+      <div class="list" id="adminTicketsList"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="card">
+      <h3>신고 내역</h3>
+      <div class="list" id="adminReportsList"></div>
+    </div>
+  `;
+
+    await loadAdminRequests();
+    await loadAdminComments();
+    await loadAdminTickets();
+    await loadAdminReports();
+
+    async function loadAdminRequests() {
+        const { data: requests, error } = await state.supabase
+            .from('requests_view')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        const list = document.getElementById('adminRequestsList');
+        if (error) {
+            list.innerHTML = `<p class="muted">의뢰 로딩 실패: ${escapeHtml(translateError(error))}</p>`;
+            return;
+        }
+
+        if (!requests || requests.length === 0) {
+            list.innerHTML = '<p class="muted">의뢰가 없습니다.</p>';
+            return;
+        }
+
+        // 작성자 핸들 조회
+        let handlesByUserId = {};
+        try {
+            const ids = Array.from(new Set(requests.map((d) => d.owner_user_id))).filter(Boolean);
+            if (ids.length) {
+                const { data: profs } = await state.supabase.from('profiles').select('user_id, handle').in('user_id', ids);
+                (profs || []).forEach(p => { if (p.handle) handlesByUserId[p.user_id] = p.handle; });
+            }
+        } catch(_) {}
+
+        list.innerHTML = requests.map(item => {
+            const rating = item.avg_rating ? Number(item.avg_rating).toFixed(1) : '-';
+            const handle = handlesByUserId?.[item.owner_user_id] || (item.owner_user_id ? item.owner_user_id.slice(0,8) : '-');
+            const date = new Date(item.created_at).toLocaleString('ko-KR', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            return `
+                <div class="list-item">
+                    <div>
+                        <h4 style="margin:0 0 4px">${escapeHtml(item.title)}</h4>
+                        <div class="muted" style="margin-bottom:6px">${escapeHtml(item.summary || '')}</div>
+                        <div class="row" style="gap:8px;margin-bottom:4px">
+                            <span class="chip">${escapeHtml(item.category || '기타')}</span>
+                            <span class="chip"><span class="rating">★</span> ${rating}</span>
+                            <span class="chip">작성자: ${escapeHtml(handle)}</span>
+                            <span class="chip muted" style="font-size:11px">${date}</span>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <button class="btn btn-danger" data-admin-action="delete-request" data-id="${item.id}" data-title="${escapeHtml(item.title)}">의뢰 삭제</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        list.querySelectorAll('[data-admin-action="delete-request"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                const title = e.target.getAttribute('data-title');
+                if (!confirm(`정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)`)) return;
+
+                // 버튼 비활성화 및 로딩 표시
+                const originalText = e.target.textContent;
+                e.target.disabled = true;
+                e.target.textContent = '삭제 중...';
+
+                const { error, data } = await state.supabase
+                    .from('requests')
+                    .delete()
+                    .eq('id', id)
+                    .select();
+
+                e.target.disabled = false;
+                e.target.textContent = originalText;
+
+                if (error) {
+                    const errorMsg = translateError(error);
+                    const fullError = error.message || String(error);
+                    console.error('관리자 의뢰 삭제 오류:', error);
+                    
+                    if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                        alert(`삭제 권한이 없습니다.\n\nRLS 정책을 확인해주세요.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책이 있으면 삭제 후 재생성\nDROP POLICY IF EXISTS "Admins can delete any request" ON requests;\n\nCREATE POLICY "Admins can delete any request" ON requests\n  FOR DELETE USING (\n    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')\n  );`);
+                    } else {
+                        alert(`삭제 실패: ${errorMsg}\n\n상세 오류:\n${fullError}\n\n콘솔에서 더 자세한 정보를 확인할 수 있습니다.`);
+                    }
+                    return;
+                }
+
+                alert('의뢰가 삭제되었습니다.');
+                await loadAdminRequests();
+            });
+        });
+    }
+
+    async function loadAdminComments() {
+        const { data: comments, error } = await state.supabase
+            .from('request_comments')
+            .select('*, requests(title)')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        const list = document.getElementById('adminCommentsList');
+        if (error) {
+            list.innerHTML = `<p class="muted">댓글 로딩 실패: ${escapeHtml(translateError(error))}</p>`;
+            return;
+        }
+
+        if (!comments || comments.length === 0) {
+            list.innerHTML = '<p class="muted">댓글이 없습니다.</p>';
+            return;
+        }
+
+        // 작성자 정보 조회
+        const userIds = [...new Set(comments.map(c => c.user_id).filter(Boolean))];
+        let handlesByUserId = {};
+        if (userIds.length > 0) {
+            try {
+                const { data: profs } = await state.supabase
+                    .from('profiles')
+                    .select('user_id, handle')
+                    .in('user_id', userIds);
+                (profs || []).forEach(p => {
+                    if (p.handle) handlesByUserId[p.user_id] = p.handle;
+                });
+            } catch(_) {}
+        }
+
+        list.innerHTML = comments.map(comment => {
+            const date = new Date(comment.created_at).toLocaleString('ko-KR', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const authorName = handlesByUserId[comment.user_id] || comment.user_id?.slice(0,8) || '익명';
+            const requestTitle = comment.requests?.title || '알 수 없는 의뢰';
+
+            return `
+                <div class="list-item">
+                    <div style="flex:1">
+                        <div style="margin-bottom:4px">
+                            <strong>${escapeHtml(authorName)}</strong>
+                            <span class="muted" style="font-size:12px"> · ${date}</span>
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-bottom:4px">
+                            의뢰: ${escapeHtml(requestTitle)}
+                        </div>
+                        <div>${escapeHtml(comment.comment)}</div>
+                    </div>
+                    <button class="btn btn-danger" data-admin-action="delete-comment" data-id="${comment.id}">댓글 삭제</button>
+                </div>
+            `;
+        }).join('');
+
+        list.querySelectorAll('[data-admin-action="delete-comment"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                if (!confirm('정말 이 댓글을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)')) return;
+
+                // 버튼 비활성화 및 로딩 표시
+                const originalText = e.target.textContent;
+                e.target.disabled = true;
+                e.target.textContent = '삭제 중...';
+
+                const { error, data } = await state.supabase
+                    .from('request_comments')
+                    .delete()
+                    .eq('id', id)
+                    .select();
+
+                e.target.disabled = false;
+                e.target.textContent = originalText;
+
+                if (error) {
+                    const errorMsg = translateError(error);
+                    const fullError = error.message || String(error);
+                    console.error('관리자 댓글 삭제 오류:', error);
+                    
+                    if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                        alert(`삭제 권한이 없습니다.\n\nRLS 정책을 확인해주세요.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책이 있으면 삭제 후 재생성\nDROP POLICY IF EXISTS "Admins can delete any comment" ON request_comments;\n\nCREATE POLICY "Admins can delete any comment" ON request_comments\n  FOR DELETE USING (\n    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')\n  );`);
+                    } else {
+                        alert(`삭제 실패: ${errorMsg}\n\n상세 오류:\n${fullError}\n\n콘솔에서 더 자세한 정보를 확인할 수 있습니다.`);
+                    }
+                    return;
+                }
+
+                alert('댓글이 삭제되었습니다.');
+                await loadAdminComments();
+            });
+        });
+    }
+
+    async function loadAdminTickets() {
+        const { data: tickets, error } = await state.supabase
+            .from('tickets')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        const list = document.getElementById('adminTicketsList');
+        if (error) {
+            const errorMsg = translateError(error);
+            const fullError = error.message || String(error);
+            console.error('고객센터 문의 로딩 오류:', error);
+            
+            if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                list.innerHTML = `
+                    <div class="card" style="padding:20px;text-align:center">
+                        <p class="muted" style="margin-bottom:12px;color:var(--warn)">⚠️ 권한이 없습니다</p>
+                        <p class="muted" style="font-size:12px;margin-bottom:8px">관리자가 tickets 테이블을 조회하려면 RLS 정책이 필요합니다.</p>
+                        <details style="margin-top:12px;text-align:left">
+                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">RLS 정책 설정 SQL 보기</summary>
+                            <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
+-- 관리자가 모든 tickets 조회 가능
+CREATE POLICY "Admins can view all tickets" ON tickets
+  FOR SELECT USING (
+    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')
+  );</pre>
+                        </details>
+                        <p class="muted" style="font-size:11px;margin-top:12px">오류 상세: ${escapeHtml(fullError)}</p>
+                    </div>
+                `;
+            } else if (fullError.includes('schema cache') || fullError.includes('Could not find')) {
+                list.innerHTML = `
+                    <div class="card" style="padding:20px;text-align:center">
+                        <p class="muted" style="margin-bottom:12px;color:var(--warn)">⚠️ tickets 테이블을 찾을 수 없습니다</p>
+                        <p class="muted" style="font-size:12px;margin-bottom:8px">Supabase에서 tickets 테이블이 생성되었는지 확인해주세요.</p>
+                        <details style="margin-top:12px;text-align:left">
+                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">테이블 생성 SQL 보기</summary>
+                            <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
+CREATE TABLE tickets (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  email TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+
+-- 모든 사용자가 tickets 삽입 가능
+CREATE POLICY "Anyone can insert tickets" ON tickets
+  FOR INSERT WITH CHECK (true);
+
+-- 관리자가 모든 tickets 조회 가능
+CREATE POLICY "Admins can view all tickets" ON tickets
+  FOR SELECT USING (
+    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')
+  );</pre>
+                        </details>
+                    </div>
+                `;
+            } else {
+                list.innerHTML = `<p class="muted">고객센터 문의 로딩 실패: ${escapeHtml(errorMsg)}</p><p class="muted" style="font-size:11px;margin-top:8px">${escapeHtml(fullError)}</p>`;
+            }
+            return;
+        }
+
+        if (!tickets || tickets.length === 0) {
+            list.innerHTML = '<p class="muted">고객센터 문의가 없습니다.</p>';
+            return;
+        }
+
+        list.innerHTML = tickets.map(ticket => {
+            const date = new Date(ticket.created_at).toLocaleString('ko-KR', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            return `
+                <div class="list-item">
+                    <div style="flex:1">
+                        <div style="margin-bottom:4px">
+                            <strong>${escapeHtml(ticket.title || '제목 없음')}</strong>
+                            <span class="muted" style="font-size:12px"> · ${date}</span>
+                        </div>
+                        <div class="muted" style="font-size:12px;margin-bottom:4px">
+                            이메일: ${escapeHtml(ticket.email || '없음')}
+                        </div>
+                        <div style="white-space:pre-wrap;word-break:break-word">${escapeHtml(ticket.body || '내용 없음')}</div>
+                    </div>
+                    <button class="btn btn-danger" data-admin-action="delete-ticket" data-id="${ticket.id}">문의 삭제</button>
+                </div>
+            `;
+        }).join('');
+
+        list.querySelectorAll('[data-admin-action="delete-ticket"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                if (!confirm('정말 이 고객센터 문의를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)')) return;
+
+                const originalText = e.target.textContent;
+                e.target.disabled = true;
+                e.target.textContent = '삭제 중...';
+
+                const { error, data } = await state.supabase
+                    .from('tickets')
+                    .delete()
+                    .eq('id', id)
+                    .select();
+
+                e.target.disabled = false;
+                e.target.textContent = originalText;
+
+                if (error) {
+                    const errorMsg = translateError(error);
+                    const fullError = error.message || String(error);
+                    console.error('고객센터 문의 삭제 오류:', error);
+                    
+                    if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                        alert(`삭제 권한이 없습니다.\n\nRLS 정책을 확인해주세요.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책이 있으면 삭제 후 재생성\nDROP POLICY IF EXISTS "Admins can delete any ticket" ON tickets;\n\nCREATE POLICY "Admins can delete any ticket" ON tickets\n  FOR DELETE USING (\n    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')\n  );`);
+                    } else {
+                        alert(`삭제 실패: ${errorMsg}\n\n상세 오류:\n${fullError}\n\n콘솔에서 더 자세한 정보를 확인할 수 있습니다.`);
+                    }
+                    return;
+                }
+
+                alert('고객센터 문의가 삭제되었습니다.');
+                await loadAdminTickets();
+            });
+        });
+    }
+
+    async function loadAdminReports() {
+        const { data: reports, error } = await state.supabase
+            .from('reports')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        const list = document.getElementById('adminReportsList');
+        if (error) {
+            const errorMsg = translateError(error);
+            const fullError = error.message || String(error);
+            console.error('신고 로딩 오류:', error);
+            
+            if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                list.innerHTML = `
+                    <div class="card" style="padding:20px;text-align:center">
+                        <p class="muted" style="margin-bottom:12px;color:var(--warn)">⚠️ 권한이 없습니다</p>
+                        <p class="muted" style="font-size:12px;margin-bottom:8px">관리자가 reports 테이블을 조회하려면 RLS 정책이 필요합니다.</p>
+                        <details style="margin-top:12px;text-align:left">
+                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">RLS 정책 설정 SQL 보기</summary>
+                            <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
+-- 관리자가 모든 reports 조회 가능
+CREATE POLICY "Admins can view all reports" ON reports
+  FOR SELECT USING (
+    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')
+  );</pre>
+                        </details>
+                        <p class="muted" style="font-size:11px;margin-top:12px">오류 상세: ${escapeHtml(fullError)}</p>
+                    </div>
+                `;
+            } else if (fullError.includes('schema cache') || fullError.includes('Could not find')) {
+                list.innerHTML = `
+                    <div class="card" style="padding:20px;text-align:center">
+                        <p class="muted" style="margin-bottom:12px;color:var(--warn)">⚠️ reports 테이블을 찾을 수 없습니다</p>
+                        <p class="muted" style="font-size:12px;margin-bottom:8px">Supabase에서 reports 테이블이 생성되었는지 확인해주세요.</p>
+                        <details style="margin-top:12px;text-align:left">
+                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">테이블 생성 SQL 보기</summary>
+                            <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
+CREATE TABLE reports (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  target TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
+
+-- 모든 사용자가 reports 삽입 가능
+CREATE POLICY "Anyone can insert reports" ON reports
+  FOR INSERT WITH CHECK (true);
+
+-- 관리자가 모든 reports 조회 가능
+CREATE POLICY "Admins can view all reports" ON reports
+  FOR SELECT USING (
+    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')
+  );</pre>
+                        </details>
+                    </div>
+                `;
+            } else {
+                list.innerHTML = `<p class="muted">신고 로딩 실패: ${escapeHtml(errorMsg)}</p><p class="muted" style="font-size:11px;margin-top:8px">${escapeHtml(fullError)}</p>`;
+            }
+            return;
+        }
+
+        if (!reports || reports.length === 0) {
+            list.innerHTML = '<p class="muted">신고 내역이 없습니다.</p>';
+            return;
+        }
+
+        list.innerHTML = reports.map(report => {
+            const date = new Date(report.created_at).toLocaleString('ko-KR', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            return `
+                <div class="list-item">
+                    <div style="flex:1">
+                        <div style="margin-bottom:4px">
+                            <strong>대상: ${escapeHtml(report.target || '없음')}</strong>
+                            <span class="muted" style="font-size:12px"> · ${date}</span>
+                        </div>
+                        <div style="white-space:pre-wrap;word-break:break-word">${escapeHtml(report.reason || '사유 없음')}</div>
+                    </div>
+                    <button class="btn btn-danger" data-admin-action="delete-report" data-id="${report.id}">신고 삭제</button>
+                </div>
+            `;
+        }).join('');
+
+        list.querySelectorAll('[data-admin-action="delete-report"]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                if (!confirm('정말 이 신고 내역을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)')) return;
+
+                const originalText = e.target.textContent;
+                e.target.disabled = true;
+                e.target.textContent = '삭제 중...';
+
+                const { error, data } = await state.supabase
+                    .from('reports')
+                    .delete()
+                    .eq('id', id)
+                    .select();
+
+                e.target.disabled = false;
+                e.target.textContent = originalText;
+
+                if (error) {
+                    const errorMsg = translateError(error);
+                    const fullError = error.message || String(error);
+                    console.error('신고 삭제 오류:', error);
+                    
+                    if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                        alert(`삭제 권한이 없습니다.\n\nRLS 정책을 확인해주세요.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책이 있으면 삭제 후 재생성\nDROP POLICY IF EXISTS "Admins can delete any report" ON reports;\n\nCREATE POLICY "Admins can delete any report" ON reports\n  FOR DELETE USING (\n    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')\n  );`);
+                    } else {
+                        alert(`삭제 실패: ${errorMsg}\n\n상세 오류:\n${fullError}\n\n콘솔에서 더 자세한 정보를 확인할 수 있습니다.`);
+                    }
+                    return;
+                }
+
+                alert('신고 내역이 삭제되었습니다.');
+                await loadAdminReports();
+            });
+        });
+    }
 }
 
 // 신고 (간단)
@@ -876,7 +2530,7 @@ FOR INSERT WITH CHECK (auth.role() = 'authenticated');
                         </div>
                         <div style="display:flex;align-items:center;gap:8px">
                             <span class="comment-date muted">${date}</span>
-                            ${isOwner ? `<button class="btn-comment-delete" data-comment-id="${comment.id}" style="padding:2px 8px;font-size:11px;height:24px" title="댓글 삭제">삭제</button>` : ''}
+                            ${isOwner || state.isAdmin ? `<button class="btn-comment-delete" data-comment-id="${comment.id}" style="padding:2px 8px;font-size:11px;height:24px" title="${state.isAdmin ? '관리자 권한으로 삭제' : '댓글 삭제'}">삭제</button>` : ''}
                         </div>
                     </div>
                     <div class="comment-body">
@@ -893,22 +2547,47 @@ FOR INSERT WITH CHECK (auth.role() = 'authenticated');
                 const commentId = e.target.getAttribute('data-comment-id');
                 if (!commentId) return;
 
-                if (!confirm('정말 이 댓글을 삭제하시겠습니까?')) return;
+                const isAdminDelete = state.isAdmin;
+                const confirmMsg = isAdminDelete
+                    ? '정말 이 댓글을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)'
+                    : '정말 이 댓글을 삭제하시겠습니까?';
 
-                const { error } = await state.supabase
+                if (!confirm(confirmMsg)) return;
+
+                let query = state.supabase
                     .from('request_comments')
                     .delete()
-                    .eq('id', commentId)
-                    .eq('user_id', state.session.user.id);
+                    .eq('id', commentId);
+                
+                // 관리자가 아니면 본인 댓글만 삭제 가능
+                if (!isAdminDelete) {
+                    query = query.eq('user_id', state.session.user.id);
+                }
+
+                // 버튼 비활성화 및 로딩 표시
+                const deleteBtn = e.target;
+                const originalText = deleteBtn.textContent;
+                deleteBtn.disabled = true;
+                deleteBtn.textContent = '삭제 중...';
+
+                const { error, data } = await query.select();
+
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = originalText;
 
                 if (error) {
                     const errorMsg = translateError(error);
                     const fullError = error.message || String(error);
+                    console.error('댓글 삭제 오류:', error);
                     
-                    if (fullError.includes('permission denied') || fullError.includes('policy')) {
-                        alert('댓글 삭제 권한이 없습니다.\n\nSupabase에서 DELETE 정책을 추가해주세요:\n\nCREATE POLICY "Users can delete own comments" ON request_comments\nFOR DELETE USING (auth.uid() = user_id);');
+                    if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                        if (isAdminDelete) {
+                            alert(`댓글 삭제 권한이 없습니다.\n\n관리자 권한으로 삭제하려면 Supabase에서 RLS 정책을 설정해야 합니다.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책이 있으면 삭제 후 재생성\nDROP POLICY IF EXISTS "Admins can delete any comment" ON request_comments;\n\nCREATE POLICY "Admins can delete any comment" ON request_comments\n  FOR DELETE USING (\n    auth.jwt() ->> 'email' IN ('wjekzzz@gmail.com')\n  );`);
+                        } else {
+                            alert(`댓글 삭제 권한이 없습니다.\n\n본인이 작성한 댓글만 삭제할 수 있습니다.\n\n이미 "Users can delete own comments" 정책이 있다면 문제없습니다.`);
+                        }
                     } else {
-                        alert('댓글 삭제 실패: ' + errorMsg + '\n\n상세: ' + fullError);
+                        alert(`댓글 삭제 실패: ${errorMsg}\n\n상세 오류:\n${fullError}\n\n콘솔에서 더 자세한 정보를 확인할 수 있습니다.`);
                     }
                     return;
                 }
@@ -1087,12 +2766,12 @@ async function openReviewDialog(reviewedUserId) {
         reviewSubmit.disabled = true;
         reviewSubmit.textContent = '등록 중...';
 
-        const { error } = await state.supabase.from('reviews').insert({
-            reviewed_user_id: reviewedUserId,
-            reviewer_user_id: state.session.user.id,
+    const { error } = await state.supabase.from('reviews').insert({
+        reviewed_user_id: reviewedUserId,
+        reviewer_user_id: state.session.user.id,
             rating: selectedRating,
-            comment,
-        });
+        comment,
+    });
 
         reviewSubmit.disabled = false;
         reviewSubmit.textContent = '등록';
@@ -1103,7 +2782,7 @@ async function openReviewDialog(reviewedUserId) {
         }
 
         reviewDialog.close();
-        alert('리뷰가 등록되었습니다.');
+    alert('리뷰가 등록되었습니다.');
         
         // 프로필 페이지면 새로고침
         if (location.hash === '#/profile') {
@@ -1226,6 +2905,9 @@ async function ensureProfile() {
         break;
     }
 }
+
+
+
 
 // 시작
 window.addEventListener('DOMContentLoaded', initApp);
