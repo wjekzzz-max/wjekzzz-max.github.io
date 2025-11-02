@@ -2631,7 +2631,7 @@ CREATE POLICY "Users can send messages" ON messages
         }
     }
     
-    // 주기적으로 메시지 새로고침 (5초마다)
+    // 주기적으로 메시지 새로고침 (3초마다)
     let refreshInterval = null;
     let isDialogOpen = true;
     
@@ -2641,7 +2641,7 @@ CREATE POLICY "Users can send messages" ON messages
             if (isDialogOpen) {
                 await loadMessages();
             }
-        }, 3000); // 3초마다 새로고침
+        }, 1000); // 1초마다 새로고침
     };
     
     const stopRefresh = () => {
