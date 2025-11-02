@@ -540,7 +540,24 @@ async function renderRequests(root) {
                 (profs || []).forEach(p => { if (p.handle) handlesByUserId[p.user_id] = p.handle; });
             }
         } catch(_) {}
-        list.innerHTML = data.map((item) => renderRequestItem(item, handlesByUserId)).join('');
+        
+        // 이미 신청한 의뢰 확인 (로그인한 경우만)
+        let applicationStatusByRequestId = {};
+        if (state.session) {
+            try {
+                const requestIds = data.map(d => d.id);
+                const { data: applications } = await state.supabase
+                    .from('request_applications')
+                    .select('request_id, status')
+                    .eq('applicant_user_id', state.session.user.id)
+                    .in('request_id', requestIds);
+                (applications || []).forEach(app => {
+                    applicationStatusByRequestId[app.request_id] = app.status;
+                });
+            } catch(_) {}
+        }
+        
+        list.innerHTML = data.map((item) => renderRequestItem(item, handlesByUserId, applicationStatusByRequestId[item.id])).join('');
         document.querySelectorAll('[data-action="view-comments"]').forEach((btn) => btn.addEventListener('click', onClickViewComments));
         document.querySelectorAll('[data-action="view-reviews"]').forEach((btn) => btn.addEventListener('click', onClickViewReviews));
         document.querySelectorAll('[data-action="review"]').forEach((btn) => btn.addEventListener('click', onClickReview));
@@ -549,10 +566,28 @@ async function renderRequests(root) {
         document.querySelectorAll('[data-action="delete"]').forEach((btn) => btn.addEventListener('click', onClickDelete));
     }
 
-    function renderRequestItem(item, handlesByUserId) {
+    function renderRequestItem(item, handlesByUserId, applicationStatus) {
         const rating = item.avg_rating ? Number(item.avg_rating).toFixed(1) : '-';
         const isOwner = !!state.session && state.session.user.id === item.owner_user_id;
         const handle = handlesByUserId?.[item.owner_user_id] || (item.owner_user_id ? item.owner_user_id.slice(0,8) : '-');
+        
+        // 신청 버튼 텍스트 결정
+        let applyButtonText = '의뢰 받기';
+        let applyButtonDisabled = false;
+        let applyButtonClass = 'btn btn-primary';
+        if (applicationStatus === 'pending') {
+            applyButtonText = '신청 대기 중';
+            applyButtonDisabled = true;
+            applyButtonClass = 'btn';
+        } else if (applicationStatus === 'accepted') {
+            applyButtonText = '수락됨 ✓';
+            applyButtonDisabled = true;
+            applyButtonClass = 'btn';
+        } else if (applicationStatus === 'rejected') {
+            applyButtonText = '의뢰 받기 (재신청)';
+            applyButtonClass = 'btn';
+        }
+        
         return `
       <div class="list-item">
         <div>
@@ -567,7 +602,7 @@ async function renderRequests(root) {
         <div class="row">
           <button class="btn" data-action="view-comments" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">댓글 보기</button>
           <button class="btn" data-action="view-reviews" data-user-id="${item.owner_user_id}" data-user-handle="${handle}">작성자 리뷰</button>
-          ${!isOwner && state.session ? `<button class="btn btn-primary" data-action="apply-request" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">의뢰 받기</button>` : ''}
+          ${!isOwner && state.session ? `<button class="${applyButtonClass}" data-action="apply-request" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" ${applyButtonDisabled ? 'disabled' : ''}>${applyButtonText}</button>` : ''}
           ${!isOwner && state.session ? `<button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>` : ''}
           ${isOwner ? `<button class="btn" data-action="view-applications" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">신청자 보기</button>` : ''}
           ${isOwner || state.isAdmin ? `<button class="btn btn-danger" data-action="delete" data-id="${item.id}" data-title="${escapeHtml(item.title)}">삭제</button>` : ''}
@@ -605,13 +640,20 @@ async function renderRequests(root) {
         const requestId = e.currentTarget.getAttribute('data-request-id');
         const requestTitle = e.currentTarget.getAttribute('data-request-title');
         
-        // 이미 신청했는지 확인
-        const { data: existing } = await state.supabase
-            .from('request_applications')
-            .select('id, status')
-            .eq('request_id', requestId)
-            .eq('applicant_user_id', state.session.user.id)
-            .maybeSingle();
+        // 이미 신청했는지 확인 (오류 무시하고 진행)
+        let existing = null;
+        try {
+            const { data } = await state.supabase
+                .from('request_applications')
+                .select('id, status')
+                .eq('request_id', requestId)
+                .eq('applicant_user_id', state.session.user.id)
+                .maybeSingle();
+            existing = data;
+        } catch(err) {
+            // 테이블이 없어도 계속 진행 (신청 시도)
+            console.warn('신청 상태 확인 실패:', err);
+        }
         
         if (existing) {
             if (existing.status === 'accepted') {
@@ -630,8 +672,11 @@ async function renderRequests(root) {
                         return;
                     }
                     alert('의뢰 신청이 접수되었습니다.');
-                    e.currentTarget.textContent = '신청 완료';
+                    e.currentTarget.textContent = '신청 대기 중';
                     e.currentTarget.disabled = true;
+                    e.currentTarget.classList.remove('btn-primary');
+                    e.currentTarget.classList.add('btn');
+                    await loadRequests();
                 }
             }
             return;
@@ -652,17 +697,30 @@ async function renderRequests(root) {
                 status: 'pending'
             });
         
-        applyBtn.disabled = false;
-        applyBtn.textContent = originalText;
-        
         if (error) {
-            alert('신청 실패: ' + translateError(error) + '\n\n테이블이 없다면 Supabase에서 request_applications 테이블을 생성해야 합니다.');
+            applyBtn.disabled = false;
+            applyBtn.textContent = originalText;
+            
+            const errorMsg = translateError(error);
+            const fullError = error.message || String(error);
+            console.error('의뢰 신청 오류:', error);
+            
+            if (fullError.includes('schema cache') || fullError.includes('Could not find') || fullError.includes('does not exist')) {
+                alert(`테이블을 찾을 수 없습니다.\n\nSupabase SQL Editor에서 request_applications 테이블을 생성해야 합니다.\n\n테이블 생성 SQL:\n\nCREATE TABLE IF NOT EXISTS request_applications (\n  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n  request_id UUID NOT NULL REFERENCES requests(id) ON DELETE CASCADE,\n  applicant_user_id UUID NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nCREATE INDEX IF NOT EXISTS idx_request_applications_request_id ON request_applications(request_id);\nCREATE INDEX IF NOT EXISTS idx_request_applications_applicant ON request_applications(applicant_user_id);\n\nALTER TABLE request_applications ENABLE ROW LEVEL SECURITY;\n\n-- 기존 정책 삭제 후 재생성\nDROP POLICY IF EXISTS "Anyone can apply" ON request_applications;\nDROP POLICY IF EXISTS "Users can view own applications or requests" ON request_applications;\nDROP POLICY IF EXISTS "Request owners can update applications" ON request_applications;\n\nCREATE POLICY "Anyone can apply" ON request_applications\n  FOR INSERT WITH CHECK (auth.role() = 'authenticated' AND applicant_user_id = auth.uid());\n\nCREATE POLICY "Users can view own applications or requests" ON request_applications\n  FOR SELECT USING (\n    applicant_user_id = auth.uid() OR\n    EXISTS (\n      SELECT 1 FROM requests \n      WHERE requests.id = request_applications.request_id \n      AND requests.owner_user_id = auth.uid()\n    )\n  );\n\nCREATE POLICY "Request owners can update applications" ON request_applications\n  FOR UPDATE USING (\n    EXISTS (\n      SELECT 1 FROM requests \n      WHERE requests.id = request_applications.request_id \n      AND requests.owner_user_id = auth.uid()\n    )\n  );`);
+            } else {
+                alert(`신청 실패: ${errorMsg}\n\n상세 오류: ${fullError}`);
+            }
             return;
         }
         
         alert('의뢰 신청이 접수되었습니다.\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.');
-        applyBtn.textContent = '신청 완료';
+        applyBtn.textContent = '신청 대기 중';
         applyBtn.disabled = true;
+        applyBtn.classList.remove('btn-primary');
+        applyBtn.classList.add('btn');
+        
+        // 목록 새로고침하여 버튼 상태 업데이트
+        await loadRequests();
     }
 
     function onClickViewApplications(e) {
@@ -875,20 +933,16 @@ async function renderRequestApplications(root, requestId) {
                         <h3>테이블을 찾을 수 없습니다</h3>
                         <p class="muted" style="margin-bottom:12px">request_applications 테이블이 필요합니다.</p>
                         <details style="margin-top:12px">
-                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">테이블 생성 SQL 보기</summary>
+                            <summary style="cursor:pointer;color:var(--primary);font-size:12px">RLS 정책 설정 SQL 보기 (테이블이 이미 있는 경우)</summary>
                             <pre style="background:#0c111a;padding:12px;border-radius:8px;overflow-x:auto;text-align:left;font-size:11px;margin-top:8px">
-CREATE TABLE request_applications (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  request_id UUID NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
-  applicant_user_id UUID NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- request_applications 테이블이 이미 있는 경우, 아래 RLS 정책만 실행하세요.
 
-CREATE INDEX idx_request_applications_request_id ON request_applications(request_id);
-CREATE INDEX idx_request_applications_applicant ON request_applications(applicant_user_id);
+-- 기존 정책 삭제 (안전하게 처리)
+DROP POLICY IF EXISTS "Anyone can apply" ON request_applications;
+DROP POLICY IF EXISTS "Users can view own applications or requests" ON request_applications;
+DROP POLICY IF EXISTS "Request owners can update applications" ON request_applications;
 
+-- RLS 활성화 확인
 ALTER TABLE request_applications ENABLE ROW LEVEL SECURITY;
 
 -- 모든 사용자가 신청 조회 가능 (본인 신청 또는 본인 의뢰)

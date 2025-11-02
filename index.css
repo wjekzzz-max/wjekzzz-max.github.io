@@ -20,7 +20,6 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:
 .btn-ghost{background:transparent}
 .btn-danger{background:transparent;border-color:var(--bad);color:var(--bad)}
 .btn-danger:hover{background:rgba(239,68,68,0.1)}
-.admin-badge{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:linear-gradient(135deg,var(--primary),var(--primary-600));color:#0b1020;border-radius:6px;font-size:12px;font-weight:600;margin-right:8px;box-shadow:0 2px 4px rgba(106,161,255,0.3)}
 .app-footer{border-top:1px solid var(--border);margin-top:40px}
 main#app{padding:24px 0 40px}
 
