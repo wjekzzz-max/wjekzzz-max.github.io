@@ -3366,9 +3366,18 @@ function translateError(error) {
 async function startMessageNotifications() {
     if (!state.session || state.messageCheckInterval) return;
     
-    // 브라우저 알림 권한 요청
-    if ('Notification' in window && Notification.permission === 'default') {
-        await Notification.requestPermission();
+    // 브라우저 알림 권한 요청 및 확인
+    if ('Notification' in window) {
+        if (Notification.permission === 'default') {
+            const permission = await Notification.requestPermission();
+            if (permission === 'granted') {
+                console.log('브라우저 알림 권한이 허용되었습니다.');
+            } else if (permission === 'denied') {
+                console.warn('브라우저 알림 권한이 거부되었습니다. 브라우저 설정에서 알림을 허용해주세요.');
+            }
+        } else if (Notification.permission === 'denied') {
+            console.warn('브라우저 알림 권한이 거부되어 있습니다. 브라우저 설정에서 알림을 허용해주세요.');
+        }
     }
     
     state.messageCheckInterval = setInterval(async () => {
@@ -3436,17 +3445,43 @@ async function checkNewMessages() {
                     if (prof?.handle) senderHandle = prof.handle;
                 } catch(_) {}
                 
-                // 브라우저 알림 표시
+                // 브라우저 알림 표시 (권한이 있을 때)
                 if ('Notification' in window && Notification.permission === 'granted') {
-                    new Notification('새 메시지', {
-                        body: `${senderHandle}: ${latestMessage.message.substring(0, 50)}${latestMessage.message.length > 50 ? '...' : ''}`,
-                        icon: '/favicon.ico',
-                        tag: `message-${latestMessage.id}`,
-                        requireInteraction: false,
-                    });
+                    try {
+                        const notificationBody = `${senderHandle}: ${latestMessage.message.substring(0, 100)}${latestMessage.message.length > 100 ? '...' : ''}`;
+                        
+                        const notification = new Notification('새 메시지가 도착했습니다', {
+                            body: notificationBody,
+                            icon: '/favicon.ico',
+                            badge: '/favicon.ico',
+                            tag: `message-${latestMessage.id}`,
+                            requireInteraction: false,
+                            silent: false, // 소리 재생
+                            vibrate: [200, 100, 200], // 모바일 진동 (지원되는 경우)
+                        });
+                        
+                        // 알림 클릭 시 메시지 다이얼로그 열기
+                        notification.onclick = function() {
+                            window.focus();
+                            this.close();
+                            // 메시지 다이얼로그 열기 로직 (필요한 경우 추가)
+                        };
+                        
+                        // 5초 후 자동으로 알림 닫기
+                        setTimeout(() => {
+                            notification.close();
+                        }, 5000);
+                        
+                        console.log('브라우저 알림이 표시되었습니다:', notificationBody);
+                    } catch (error) {
+                        console.error('알림 표시 중 오류:', error);
+                    }
+                } else {
+                    // 권한이 없을 때는 콘솔에 로그만 남김
+                    console.log('알림 권한이 없어 브라우저 알림을 표시할 수 없습니다.');
                 }
                 
-                // 페이지 타이틀에 알림 표시
+                // 페이지 타이틀에 알림 표시 (항상 표시)
                 updatePageTitleWithNotification(true);
             }
         }
