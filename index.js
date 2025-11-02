@@ -10,6 +10,9 @@ const state = {
     session: null,
     pendingReportTarget: null,
     isAdmin: false,  // 관리자 여부
+    activeMessageDialog: null,  // 현재 열려있는 메시지 다이얼로그 정보 {requestId, receiverId}
+    lastCheckedMessageTime: null,  // 마지막으로 확인한 메시지 시간
+    messageCheckInterval: null,  // 메시지 확인 인터벌
 };
 
 // 관리자 이메일 리스트 (여기에 관리자 이메일을 추가하세요)
@@ -71,6 +74,11 @@ async function initApp() {
 
     setupAuthUI();
     setupRouting();
+    
+    // 로그인되어 있으면 메시지 알림 시작
+    if (state.session?.user) {
+        startMessageNotifications();
+    }
 }
 
 function setupAuthUI() {
@@ -268,6 +276,11 @@ function setupAuthUI() {
         await updateButtons();
         if (session?.user) {
             try { await ensureProfile(); } catch (_) {}
+            // 메시지 알림 시작
+            startMessageNotifications();
+        } else {
+            // 로그아웃 시 알림 중지
+            stopMessageNotifications();
         }
     });
 
@@ -2423,6 +2436,9 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     
     const senderId = state.session.user.id;
     
+    // 현재 열려있는 메시지 다이얼로그 정보 저장 (알림 방지용)
+    state.activeMessageDialog = { requestId, receiverId, senderId };
+    
     const messagesViewDialog = document.getElementById('messagesViewDialog');
     const messagesViewTitle = document.getElementById('messagesViewTitle');
     const messagesViewClose = document.getElementById('messagesViewClose');
@@ -2443,10 +2459,10 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     `;
 
     // 닫기 버튼 이벤트
-    const closeHandler = () => messagesViewDialog.close();
+    const closeBtnHandler = () => messagesViewDialog.close();
     messagesViewClose.replaceWith(messagesViewClose.cloneNode(true));
     const newCloseBtn = document.getElementById('messagesViewClose');
-    newCloseBtn.addEventListener('click', closeHandler);
+    newCloseBtn.addEventListener('click', closeBtnHandler);
 
     // 메시지 전송 이벤트
     const newMessageText = document.getElementById('newMessageText');
@@ -2653,8 +2669,14 @@ CREATE POLICY "Users can send messages" ON messages
     };
     
     // 다이얼로그가 닫힐 때 인터벌 정리
-    messagesViewDialog.addEventListener('close', stopRefresh);
-    messagesViewDialog.addEventListener('cancel', stopRefresh);
+    const closeHandler = () => {
+        stopRefresh();
+        // 메시지 다이얼로그가 닫히면 상태 초기화
+        state.activeMessageDialog = null;
+    };
+    
+    messagesViewDialog.addEventListener('close', closeHandler);
+    messagesViewDialog.addEventListener('cancel', closeHandler);
     
     // 새로고침 시작
     startRefresh();
@@ -3339,6 +3361,123 @@ function translateError(error) {
     // 번역할 수 없는 경우 원본 메시지 반환
     return message;
 }
+
+// 메시지 알림 시스템
+async function startMessageNotifications() {
+    if (!state.session || state.messageCheckInterval) return;
+    
+    // 브라우저 알림 권한 요청
+    if ('Notification' in window && Notification.permission === 'default') {
+        await Notification.requestPermission();
+    }
+    
+    state.messageCheckInterval = setInterval(async () => {
+        await checkNewMessages();
+    }, 5000); // 5초마다 확인
+}
+
+function stopMessageNotifications() {
+    if (state.messageCheckInterval) {
+        clearInterval(state.messageCheckInterval);
+        state.messageCheckInterval = null;
+    }
+}
+
+async function checkNewMessages() {
+    if (!state.session || !state.supabase) return;
+    
+    const userId = state.session.user.id;
+    
+    try {
+        // 마지막 확인 시간 이후의 새 메시지 가져오기
+        let query = state.supabase
+            .from('messages')
+            .select('id, sender_id, receiver_id, message, request_id, created_at')
+            .eq('receiver_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(10);
+        
+        if (state.lastCheckedMessageTime) {
+            query = query.gt('created_at', state.lastCheckedMessageTime);
+        }
+        
+        const { data: newMessages, error } = await query;
+        
+        if (error) {
+            console.warn('메시지 확인 오류:', error);
+            return;
+        }
+        
+        // 새 메시지가 있는지 확인
+        if (newMessages && newMessages.length > 0) {
+            // 현재 해당 대화방을 보고 있는지 확인
+            const unreadMessages = newMessages.filter(msg => {
+                // 현재 열려있는 메시지 다이얼로그가 없거나, 다른 대화방이면 알림 표시
+                if (!state.activeMessageDialog) return true;
+                
+                const active = state.activeMessageDialog;
+                // 같은 request_id와 상대방이면 알림 안 표시
+                return !(msg.request_id === active.requestId && 
+                        (msg.sender_id === active.receiverId || msg.sender_id === active.senderId));
+            });
+            
+            if (unreadMessages.length > 0) {
+                // 가장 최근 메시지로 알림
+                const latestMessage = unreadMessages[0];
+                
+                // 사용자 핸들 가져오기
+                let senderHandle = '익명';
+                try {
+                    const { data: prof } = await state.supabase
+                        .from('profiles')
+                        .select('handle')
+                        .eq('user_id', latestMessage.sender_id)
+                        .maybeSingle();
+                    if (prof?.handle) senderHandle = prof.handle;
+                } catch(_) {}
+                
+                // 브라우저 알림 표시
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('새 메시지', {
+                        body: `${senderHandle}: ${latestMessage.message.substring(0, 50)}${latestMessage.message.length > 50 ? '...' : ''}`,
+                        icon: '/favicon.ico',
+                        tag: `message-${latestMessage.id}`,
+                        requireInteraction: false,
+                    });
+                }
+                
+                // 페이지 타이틀에 알림 표시
+                updatePageTitleWithNotification(true);
+            }
+        }
+        
+        // 마지막 확인 시간 업데이트
+        if (newMessages && newMessages.length > 0) {
+            state.lastCheckedMessageTime = newMessages[0].created_at;
+        } else {
+            state.lastCheckedMessageTime = new Date().toISOString();
+        }
+    } catch(err) {
+        console.error('메시지 확인 중 오류:', err);
+    }
+}
+
+// 페이지 타이틀에 알림 표시/제거
+let originalTitle = document.title;
+function updatePageTitleWithNotification(hasNotification) {
+    if (hasNotification) {
+        if (!document.title.startsWith('🔔 ')) {
+            document.title = '🔔 ' + originalTitle;
+        }
+    } else {
+        document.title = originalTitle;
+    }
+}
+
+// 페이지 포커스 시 타이틀 정리
+window.addEventListener('focus', () => {
+    updatePageTitleWithNotification(false);
+});
 
 // 프로필(핸들) 보장: 없으면 한 번 입력 받아 저장
 async function ensureProfile() {
