@@ -87,6 +87,10 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);padding:2px 8px;border-radius:999px;color:var(--muted)}
 .rating{color:#ffd76a}
 
+/* Message Badge */
+.message-btn-wrapper{position:relative;display:inline-block}
+.message-badge{position:absolute;top:-8px;right:-8px;background:#ef4444;color:#fff;border-radius:50%;min-width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;padding:0 4px;box-shadow:0 2px 4px rgba(0,0,0,0.3);z-index:1}
+
 /* Helpers */
 .spacer{height:8px}
 .space{flex:1}

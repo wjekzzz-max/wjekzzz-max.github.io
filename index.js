@@ -11,13 +11,14 @@ const state = {
     pendingReportTarget: null,
     isAdmin: false,  // 관리자 여부
     activeMessageDialog: null,  // 현재 열려있는 메시지 다이얼로그 정보 {requestId, receiverId}
-    lastCheckedMessageTime: null,  // 마지막으로 확인한 메시지 시간
+    unreadMessageCounts: {},  // 읽지 않은 메시지 수 { "requestId-receiverId": count }
     messageCheckInterval: null,  // 메시지 확인 인터벌
 };
 
 // 관리자 이메일 리스트 (여기에 관리자 이메일을 추가하세요)
 const ADMIN_EMAILS = [
     'wjekzzz@gmail.com',
+    "aaa010lee@gmail.com",
     // 여기에 더 많은 관리자 이메일 추가 가능
 ];
 
@@ -75,9 +76,9 @@ async function initApp() {
     setupAuthUI();
     setupRouting();
     
-    // 로그인되어 있으면 메시지 알림 시작
+    // 로그인되어 있으면 메시지 수 확인 시작
     if (state.session?.user) {
-        startMessageNotifications();
+        startMessageCheck();
     }
 }
 
@@ -276,11 +277,11 @@ function setupAuthUI() {
         await updateButtons();
         if (session?.user) {
             try { await ensureProfile(); } catch (_) {}
-            // 메시지 알림 시작
-            startMessageNotifications();
+            // 메시지 수 확인 시작
+            startMessageCheck();
         } else {
-            // 로그아웃 시 알림 중지
-            stopMessageNotifications();
+            // 로그아웃 시 메시지 확인 중지
+            stopMessageCheck();
         }
     });
 
@@ -578,6 +579,9 @@ async function renderRequests(root) {
         document.querySelectorAll('[data-action="apply-request"]').forEach((btn) => btn.addEventListener('click', onClickApplyRequest));
         document.querySelectorAll('[data-action="view-applications"]').forEach((btn) => btn.addEventListener('click', onClickViewApplications));
         document.querySelectorAll('[data-action="delete"]').forEach((btn) => btn.addEventListener('click', onClickDelete));
+        
+        // 배지 업데이트
+        updateMessageBadges();
     }
 
     function renderRequestItem(item, handlesByUserId, applicationStatus) {
@@ -2436,8 +2440,11 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     
     const senderId = state.session.user.id;
     
-    // 현재 열려있는 메시지 다이얼로그 정보 저장 (알림 방지용)
+    // 현재 열려있는 메시지 다이얼로그 정보 저장
     state.activeMessageDialog = { requestId, receiverId, senderId };
+    
+    // 배지 업데이트 (열린 대화방의 메시지는 읽은 것으로 처리)
+    await updateUnreadMessageCounts();
     
     const messagesViewDialog = document.getElementById('messagesViewDialog');
     const messagesViewTitle = document.getElementById('messagesViewTitle');
@@ -2459,10 +2466,25 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
     `;
 
     // 닫기 버튼 이벤트
-    const closeBtnHandler = () => messagesViewDialog.close();
+    const closeBtnHandler = () => {
+        state.activeMessageDialog = null;
+        messagesViewDialog.close();
+        // 다이얼로그 닫을 때 배지 업데이트
+        updateUnreadMessageCounts();
+    };
     messagesViewClose.replaceWith(messagesViewClose.cloneNode(true));
     const newCloseBtn = document.getElementById('messagesViewClose');
     newCloseBtn.addEventListener('click', closeBtnHandler);
+    
+    // 다이얼로그가 다른 방식으로 닫힐 때도 처리 (ESC 키 등)
+    messagesViewDialog.addEventListener('close', () => {
+        if (state.activeMessageDialog && 
+            state.activeMessageDialog.requestId === requestId &&
+            state.activeMessageDialog.receiverId === receiverId) {
+            state.activeMessageDialog = null;
+            updateUnreadMessageCounts();
+        }
+    });
 
     // 메시지 전송 이벤트
     const newMessageText = document.getElementById('newMessageText');
@@ -3362,157 +3384,125 @@ function translateError(error) {
     return message;
 }
 
-// 메시지 알림 시스템
-async function startMessageNotifications() {
+// 메시지 수 확인 시스템 (읽지 않은 메시지 수 추적)
+async function startMessageCheck() {
     if (!state.session || state.messageCheckInterval) return;
     
-    // 브라우저 알림 권한 요청 및 확인
-    if ('Notification' in window) {
-        if (Notification.permission === 'default') {
-            const permission = await Notification.requestPermission();
-            if (permission === 'granted') {
-                console.log('브라우저 알림 권한이 허용되었습니다.');
-            } else if (permission === 'denied') {
-                console.warn('브라우저 알림 권한이 거부되었습니다. 브라우저 설정에서 알림을 허용해주세요.');
-            }
-        } else if (Notification.permission === 'denied') {
-            console.warn('브라우저 알림 권한이 거부되어 있습니다. 브라우저 설정에서 알림을 허용해주세요.');
-        }
-    }
+    // 즉시 한 번 확인
+    await updateUnreadMessageCounts();
     
+    // 5초마다 확인
     state.messageCheckInterval = setInterval(async () => {
-        await checkNewMessages();
-    }, 5000); // 5초마다 확인
+        await updateUnreadMessageCounts();
+    }, 5000);
 }
 
-function stopMessageNotifications() {
+function stopMessageCheck() {
     if (state.messageCheckInterval) {
         clearInterval(state.messageCheckInterval);
         state.messageCheckInterval = null;
     }
+    state.unreadMessageCounts = {};
 }
 
-async function checkNewMessages() {
+// 읽지 않은 메시지 수 업데이트
+async function updateUnreadMessageCounts() {
     if (!state.session || !state.supabase) return;
     
     const userId = state.session.user.id;
     
     try {
-        // 마지막 확인 시간 이후의 새 메시지 가져오기
-        let query = state.supabase
+        // 현재 사용자가 받은 모든 읽지 않은 메시지 가져오기
+        const { data: messages, error } = await state.supabase
             .from('messages')
-            .select('id, sender_id, receiver_id, message, request_id, created_at')
+            .select('id, sender_id, receiver_id, request_id, created_at')
             .eq('receiver_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(10);
-        
-        if (state.lastCheckedMessageTime) {
-            query = query.gt('created_at', state.lastCheckedMessageTime);
-        }
-        
-        const { data: newMessages, error } = await query;
+            .order('created_at', { ascending: false });
         
         if (error) {
             console.warn('메시지 확인 오류:', error);
             return;
         }
         
-        // 새 메시지가 있는지 확인
-        if (newMessages && newMessages.length > 0) {
-            // 현재 해당 대화방을 보고 있는지 확인
-            const unreadMessages = newMessages.filter(msg => {
-                // 현재 열려있는 메시지 다이얼로그가 없거나, 다른 대화방이면 알림 표시
-                if (!state.activeMessageDialog) return true;
-                
-                const active = state.activeMessageDialog;
-                // 같은 request_id와 상대방이면 알림 안 표시
-                return !(msg.request_id === active.requestId && 
-                        (msg.sender_id === active.receiverId || msg.sender_id === active.senderId));
-            });
-            
-            if (unreadMessages.length > 0) {
-                // 가장 최근 메시지로 알림
-                const latestMessage = unreadMessages[0];
-                
-                // 사용자 핸들 가져오기
-                let senderHandle = '익명';
-                try {
-                    const { data: prof } = await state.supabase
-                        .from('profiles')
-                        .select('handle')
-                        .eq('user_id', latestMessage.sender_id)
-                        .maybeSingle();
-                    if (prof?.handle) senderHandle = prof.handle;
-                } catch(_) {}
-                
-                // 브라우저 알림 표시 (권한이 있을 때)
-                if ('Notification' in window && Notification.permission === 'granted') {
-                    try {
-                        const notificationBody = `${senderHandle}: ${latestMessage.message.substring(0, 100)}${latestMessage.message.length > 100 ? '...' : ''}`;
-                        
-                        const notification = new Notification('새 메시지가 도착했습니다', {
-                            body: notificationBody,
-                            icon: '/favicon.ico',
-                            badge: '/favicon.ico',
-                            tag: `message-${latestMessage.id}`,
-                            requireInteraction: false,
-                            silent: false, // 소리 재생
-                            vibrate: [200, 100, 200], // 모바일 진동 (지원되는 경우)
-                        });
-                        
-                        // 알림 클릭 시 메시지 다이얼로그 열기
-                        notification.onclick = function() {
-                            window.focus();
-                            this.close();
-                            // 메시지 다이얼로그 열기 로직 (필요한 경우 추가)
-                        };
-                        
-                        // 5초 후 자동으로 알림 닫기
-                        setTimeout(() => {
-                            notification.close();
-                        }, 5000);
-                        
-                        console.log('브라우저 알림이 표시되었습니다:', notificationBody);
-                    } catch (error) {
-                        console.error('알림 표시 중 오류:', error);
-                    }
-                } else {
-                    // 권한이 없을 때는 콘솔에 로그만 남김
-                    console.log('알림 권한이 없어 브라우저 알림을 표시할 수 없습니다.');
+        // 현재 열려있는 메시지 다이얼로그가 있으면 해당 대화방의 메시지는 읽은 것으로 처리
+        const activeDialog = state.activeMessageDialog;
+        
+        // request_id와 sender_id 조합별로 읽지 않은 메시지 수 계산
+        const counts = {};
+        
+        if (messages && messages.length > 0) {
+            messages.forEach(msg => {
+                // 현재 열려있는 다이얼로그와 같은 request_id와 상대방이면 읽은 것으로 처리
+                if (activeDialog && 
+                    msg.request_id === activeDialog.requestId &&
+                    (msg.sender_id === activeDialog.receiverId || msg.sender_id === activeDialog.senderId)) {
+                    return; // 읽은 메시지는 카운트하지 않음
                 }
                 
-                // 페이지 타이틀에 알림 표시 (항상 표시)
-                updatePageTitleWithNotification(true);
-            }
+                // 키: "requestId-receiverId" (현재 사용자 입장에서는 senderId가 상대방)
+                const key = `${msg.request_id}-${msg.sender_id}`;
+                counts[key] = (counts[key] || 0) + 1;
+            });
         }
         
-        // 마지막 확인 시간 업데이트
-        if (newMessages && newMessages.length > 0) {
-            state.lastCheckedMessageTime = newMessages[0].created_at;
-        } else {
-            state.lastCheckedMessageTime = new Date().toISOString();
-        }
+        // 상태 업데이트
+        state.unreadMessageCounts = counts;
+        
+        // UI 업데이트 (메시지 버튼 배지 업데이트)
+        updateMessageBadges();
+        
     } catch(err) {
         console.error('메시지 확인 중 오류:', err);
     }
 }
 
-// 페이지 타이틀에 알림 표시/제거
-let originalTitle = document.title;
-function updatePageTitleWithNotification(hasNotification) {
-    if (hasNotification) {
-        if (!document.title.startsWith('🔔 ')) {
-            document.title = '🔔 ' + originalTitle;
+// 메시지 버튼 배지 업데이트
+function updateMessageBadges() {
+    // 모든 메시지 보내기/보기 버튼 찾기
+    document.querySelectorAll('[data-action="send-message"], [data-action="view-messages"]').forEach(btn => {
+        const requestId = btn.getAttribute('data-request-id');
+        const receiverId = btn.getAttribute('data-receiver-id');
+        const senderId = state.session?.user?.id;
+        
+        if (!requestId || !receiverId || !senderId) return;
+        
+        // 버튼이 "메시지 보내기"인 경우: 상대방(receiverId)이 보낸 메시지 수
+        // 버튼이 "메시지 보기"인 경우: 내가 보낸 게 아니라 상대방이 보낸 메시지 수
+        // 현재 사용자 입장에서 상대방 ID는 receiverId
+        // 하지만 버튼의 receiverId는 의뢰 작성자이므로, 내가 보낸 메시지의 경우 sender가 나
+        // 따라서 받은 메시지 기준으로는 sender_id가 상대방
+        
+        // 키 생성: requestId와 상대방 ID 조합
+        // "메시지 보내기" 버튼: receiverId가 상대방 (의뢰 작성자에게 보내기)
+        // "메시지 보기" 버튼: receiverId가 상대방 (의뢰 작성자가 보기)
+        const key = `${requestId}-${receiverId}`;
+        const count = state.unreadMessageCounts[key] || 0;
+        
+        // 배지 업데이트
+        let wrapper = btn.parentElement;
+        if (!wrapper || !wrapper.classList.contains('message-btn-wrapper')) {
+            // wrapper가 없으면 생성
+            wrapper = document.createElement('div');
+            wrapper.className = 'message-btn-wrapper';
+            btn.parentNode.insertBefore(wrapper, btn);
+            wrapper.appendChild(btn);
         }
-    } else {
-        document.title = originalTitle;
-    }
+        
+        // 기존 배지 제거
+        const existingBadge = wrapper.querySelector('.message-badge');
+        if (existingBadge) {
+            existingBadge.remove();
+        }
+        
+        // 새 메시지가 있으면 배지 추가
+        if (count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'message-badge';
+            badge.textContent = count > 99 ? '99+' : count.toString();
+            wrapper.appendChild(badge);
+        }
+    });
 }
-
-// 페이지 포커스 시 타이틀 정리
-window.addEventListener('focus', () => {
-    updatePageTitleWithNotification(false);
-});
 
 // 프로필(핸들) 보장: 없으면 한 번 입력 받아 저장
 async function ensureProfile() {
