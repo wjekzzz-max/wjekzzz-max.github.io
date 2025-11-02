@@ -633,26 +633,51 @@ async function renderRequests(root) {
     }
 
     async function onClickApplyRequest(e) {
+        console.log('의뢰 받기 버튼 클릭됨', e);
+        
         if (!state.session) {
             alert('로그인이 필요합니다');
             return;
         }
-        const requestId = e.currentTarget.getAttribute('data-request-id');
-        const requestTitle = e.currentTarget.getAttribute('data-request-title');
+        
+        // 이벤트 타겟 안전하게 가져오기
+        const target = e.currentTarget || e.target || (e.target?.closest('[data-action="apply-request"]'));
+        if (!target) {
+            console.error('버튼을 찾을 수 없습니다:', e);
+            alert('오류가 발생했습니다. 페이지를 새로고침해주세요.');
+            return;
+        }
+        
+        const requestId = target.getAttribute('data-request-id');
+        const requestTitle = target.getAttribute('data-request-title');
+        
+        if (!requestId) {
+            alert('의뢰 ID를 찾을 수 없습니다.');
+            console.error('requestId 없음:', target);
+            return;
+        }
+        
+        console.log('의뢰 신청 시도:', { requestId, requestTitle, userId: state.session.user.id });
         
         // 이미 신청했는지 확인 (오류 무시하고 진행)
         let existing = null;
+        let checkError = null;
         try {
-            const { data } = await state.supabase
+            const { data, error } = await state.supabase
                 .from('request_applications')
                 .select('id, status')
                 .eq('request_id', requestId)
                 .eq('applicant_user_id', state.session.user.id)
                 .maybeSingle();
             existing = data;
+            checkError = error;
+            if (error) {
+                console.warn('신청 상태 확인 오류:', error);
+            }
         } catch(err) {
             // 테이블이 없어도 계속 진행 (신청 시도)
             console.warn('신청 상태 확인 실패:', err);
+            checkError = err;
         }
         
         if (existing) {
@@ -672,10 +697,13 @@ async function renderRequests(root) {
                         return;
                     }
                     alert('의뢰 신청이 접수되었습니다.');
-                    e.currentTarget.textContent = '신청 대기 중';
-                    e.currentTarget.disabled = true;
-                    e.currentTarget.classList.remove('btn-primary');
-                    e.currentTarget.classList.add('btn');
+                    const target = e.currentTarget || e.target || (e.target?.closest('[data-action="apply-request"]'));
+                    if (target) {
+                        target.textContent = '신청 대기 중';
+                        target.disabled = true;
+                        target.classList.remove('btn-primary');
+                        target.classList.add('btn');
+                    }
                     await loadRequests();
                 }
             }
@@ -684,40 +712,62 @@ async function renderRequests(root) {
         
         if (!confirm(`"${requestTitle}" 의뢰를 받겠습니까?\n\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.`)) return;
         
-        const applyBtn = e.currentTarget;
-        const originalText = applyBtn.textContent;
+        // 이벤트 타겟 안전하게 가져오기
+        const applyBtn = e.currentTarget || e.target || (e.target?.closest('[data-action="apply-request"]'));
+        if (!applyBtn) {
+            console.error('버튼을 찾을 수 없습니다:', e);
+            alert('오류가 발생했습니다. 페이지를 새로고침해주세요.');
+            return;
+        }
+        
+        const originalText = applyBtn.textContent || '의뢰 받기';
         applyBtn.disabled = true;
         applyBtn.textContent = '신청 중...';
         
-        const { error } = await state.supabase
+        console.log('신청 INSERT 시도 중...');
+        const { data: insertData, error } = await state.supabase
             .from('request_applications')
             .insert({
                 request_id: requestId,
                 applicant_user_id: state.session.user.id,
                 status: 'pending'
-            });
+            })
+            .select();
+        
+        console.log('INSERT 결과:', { data: insertData, error });
         
         if (error) {
-            applyBtn.disabled = false;
-            applyBtn.textContent = originalText;
+            // 버튼이 여전히 존재하는지 확인
+            if (applyBtn && applyBtn.parentElement) {
+                applyBtn.disabled = false;
+                applyBtn.textContent = originalText;
+            }
             
             const errorMsg = translateError(error);
             const fullError = error.message || String(error);
-            console.error('의뢰 신청 오류:', error);
+            console.error('의뢰 신청 오류 상세:', { error, fullError, errorMsg });
             
             if (fullError.includes('schema cache') || fullError.includes('Could not find') || fullError.includes('does not exist')) {
                 alert(`테이블을 찾을 수 없습니다.\n\nSupabase SQL Editor에서 request_applications 테이블을 생성해야 합니다.\n\n테이블 생성 SQL:\n\nCREATE TABLE IF NOT EXISTS request_applications (\n  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n  request_id UUID NOT NULL REFERENCES requests(id) ON DELETE CASCADE,\n  applicant_user_id UUID NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nCREATE INDEX IF NOT EXISTS idx_request_applications_request_id ON request_applications(request_id);\nCREATE INDEX IF NOT EXISTS idx_request_applications_applicant ON request_applications(applicant_user_id);\n\nALTER TABLE request_applications ENABLE ROW LEVEL SECURITY;\n\n-- 기존 정책 삭제 후 재생성\nDROP POLICY IF EXISTS "Anyone can apply" ON request_applications;\nDROP POLICY IF EXISTS "Users can view own applications or requests" ON request_applications;\nDROP POLICY IF EXISTS "Request owners can update applications" ON request_applications;\n\nCREATE POLICY "Anyone can apply" ON request_applications\n  FOR INSERT WITH CHECK (auth.role() = 'authenticated' AND applicant_user_id = auth.uid());\n\nCREATE POLICY "Users can view own applications or requests" ON request_applications\n  FOR SELECT USING (\n    applicant_user_id = auth.uid() OR\n    EXISTS (\n      SELECT 1 FROM requests \n      WHERE requests.id = request_applications.request_id \n      AND requests.owner_user_id = auth.uid()\n    )\n  );\n\nCREATE POLICY "Request owners can update applications" ON request_applications\n  FOR UPDATE USING (\n    EXISTS (\n      SELECT 1 FROM requests \n      WHERE requests.id = request_applications.request_id \n      AND requests.owner_user_id = auth.uid()\n    )\n  );`);
+            } else if (fullError.includes('permission denied') || fullError.includes('policy') || fullError.includes('RLS')) {
+                alert(`권한이 없습니다.\n\nRLS 정책을 확인해주세요.\n\nSupabase SQL Editor에서 다음을 실행하세요:\n\n-- 기존 정책 삭제 후 재생성\nDROP POLICY IF EXISTS "Anyone can apply" ON request_applications;\n\nCREATE POLICY "Anyone can apply" ON request_applications\n  FOR INSERT WITH CHECK (auth.role() = 'authenticated' AND applicant_user_id = auth.uid());\n\n상세 오류: ${fullError}`);
             } else {
-                alert(`신청 실패: ${errorMsg}\n\n상세 오류: ${fullError}`);
+                alert(`신청 실패: ${errorMsg}\n\n상세 오류: ${fullError}\n\n콘솔(F12)에서 더 자세한 정보를 확인할 수 있습니다.`);
             }
             return;
         }
         
+        console.log('신청 성공:', insertData);
+        
         alert('의뢰 신청이 접수되었습니다.\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.');
-        applyBtn.textContent = '신청 대기 중';
-        applyBtn.disabled = true;
-        applyBtn.classList.remove('btn-primary');
-        applyBtn.classList.add('btn');
+        
+        // 버튼이 여전히 존재하는지 확인
+        if (applyBtn && applyBtn.parentElement) {
+            applyBtn.textContent = '신청 대기 중';
+            applyBtn.disabled = true;
+            applyBtn.classList.remove('btn-primary');
+            applyBtn.classList.add('btn');
+        }
         
         // 목록 새로고침하여 버튼 상태 업데이트
         await loadRequests();
