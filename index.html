@@ -34,17 +34,17 @@
         </div>
     </footer>
 
-    <!-- Comments View Dialog -->
-    <dialog id="commentsViewDialog">
-        <div class="comments-view-form">
+    <!-- Messages Dialog (1:1 대화) -->
+    <dialog id="messagesViewDialog">
+        <div class="reviews-view-form" style="display:flex;flex-direction:column;height:600px;max-width:600px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-                <h3 id="commentsViewTitle">댓글</h3>
-                <button type="button" class="btn btn-ghost" id="commentsViewClose" style="min-width:auto;padding:4px 8px">✕</button>
+                <h3 id="messagesViewTitle">메시지</h3>
+                <button type="button" class="btn btn-ghost" id="messagesViewClose" style="min-width:auto;padding:4px 8px">✕</button>
             </div>
-            <div id="commentsList" style="max-height:400px;overflow-y:auto;padding-right:4px;margin-bottom:16px">
+            <div id="messagesList" style="flex:1;overflow-y:auto;padding-right:4px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px">
                 <p class="muted" style="text-align:center;padding:20px">로딩 중...</p>
             </div>
-            <div id="commentFormSection"></div>
+            <div id="messageFormSection" style="border-top:1px solid var(--border);padding-top:12px"></div>
         </div>
     </dialog>
 
