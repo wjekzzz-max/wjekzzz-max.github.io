@@ -17,6 +17,48 @@ const state = {
     messageCheckInterval: null,  // 메시지 확인 인터벌
 };
 
+// SweetAlert2 helpers
+function swAlert(message, options = {}) {
+    if (window.Swal) {
+        return Swal.fire({
+            text: String(message),
+            icon: options.icon || 'info',
+            confirmButtonText: options.confirmButtonText || '확인',
+            ...options,
+        });
+    }
+    // Fallback
+    // eslint-disable-next-line no-alert
+    alert(String(message));
+}
+
+async function confirmAsync(message, options = {}) {
+    if (window.Swal) {
+        const res = await Swal.fire({
+            text: String(message),
+            icon: options.icon || 'question',
+            showCancelButton: true,
+            confirmButtonText: options.confirmButtonText || '확인',
+            cancelButtonText: options.cancelButtonText || '취소',
+            ...options,
+        });
+        return !!res.isConfirmed;
+    }
+    // Fallback to native confirm
+    // eslint-disable-next-line no-restricted-globals
+    return confirm(String(message));
+}
+
+// Override window.alert to use SweetAlert2 when available (non-blocking Promise)
+const nativeAlert = window.alert;
+window.alert = function(message) {
+    if (window.Swal) {
+        Swal.fire({ text: String(message), icon: 'info', confirmButtonText: '확인' });
+        return;
+    }
+    nativeAlert(String(message));
+};
+
 // 관리자 이메일 리스트 (여기에 관리자 이메일을 추가하세요)
 const ADMIN_EMAILS = [
     'wjekzzz@gmail.com',
@@ -214,7 +256,10 @@ function setupAuthUI() {
         const email = document.getElementById('authEmail').value.trim();
         const password = document.getElementById('authPassword').value;
         const password2 = authPassword2Input.value;
-        if (!email || !password) return;
+        if (!email || !password) { alert('이메일과 비밀번호를 입력하세요.'); return; }
+        // 기본 형식 검증 (간단 체크)
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { alert('올바른 이메일 형식이 아닙니다.'); return; }
+        if (password.length < 6) { alert('비밀번호는 최소 6자 이상이어야 합니다.'); return; }
         // 회원가입일 때는 반드시 비밀번호 확인 일치 필요
         if (isSignup) {
             if (!password2) { alert('비밀번호 확인을 입력하세요.'); return; }
@@ -224,6 +269,10 @@ function setupAuthUI() {
             if (password2 && password !== password2) { alert('비밀번호가 일치하지 않습니다.'); return; }
         }
         try {
+            // 로딩 상태 표시
+            authSubmit.disabled = true;
+            const originalText = authSubmit.textContent;
+            authSubmit.textContent = isSignup ? '회원가입 처리 중...' : '로그인 중...';
             if (isSignup) {
                 // 일반 회원가입은 항상 일반 사용자로 처리
                 const { data: signUpData, error: signUpError } = await state.supabase.auth.signUp({ email, password });
@@ -238,25 +287,45 @@ function setupAuthUI() {
                     await updateButtons();
                     navigateTo('#/');
                 } else {
-                    // 이메일 확인이 필요한 경우 자동 로그인 시도
-                    const { data: signInData, error: signInError } = await state.supabase.auth.signInWithPassword({ email, password });
-                    if (signInError) {
-                        alert(translateError(signInError) || '회원가입 완료. 이메일 확인 후 다시 로그인해주세요.');
-                        isSignup = false;
-                        authTitle.textContent = '로그인';
-                        authSubmit.textContent = '로그인';
-                        toggleAuthMode.textContent = '회원가입';
-                    } else {
-                        state.session = signInData.session;
-                        state.isAdmin = false;  // 일반 회원가입 창에서는 관리자로 인식 안 함
-                        localStorage.setItem('isAdmin', 'false');  // 일반 사용자 상태 저장
-                        try { await ensureProfile(); } catch(_) {}
-                        authDialog.close();
-                        await updateButtons();
-                        navigateTo('#/');
-                    }
+                    // 이메일 확인이 필요한 경우: 자연스러운 안내 후 로그인 모드로 전환
+                    alert('회원가입이 완료되었습니다. 이메일로 전송된 인증 링크를 확인한 뒤 다시 로그인해주세요.');
+                    isSignup = false;
+                    authTitle.textContent = '로그인';
+                    authSubmit.textContent = '로그인';
+                    toggleAuthMode.textContent = '회원가입';
+                    // 비밀번호 확인 입력은 숨겨진 상태일 수 있으므로 그대로 두고, 사용자 흐름만 전환
                 }
             } else {
+                // 로그인 전 사전 검증: 가입된 사용자만 로그인 허용 (user_profiles_view 기준)
+                try {
+                    let exists = false;
+                    const { data: upv, error: upvErr } = await state.supabase
+                        .from('user_profiles_view')
+                        .select('user_id, email')
+                        .eq('email', email.toLowerCase())
+                        .limit(1);
+                    if (!upvErr && upv && upv.length > 0) {
+                        exists = true;
+                    } else {
+                        // view가 있고 결과가 0이면 미가입으로 판단, view 오류면 통과
+                        if (!upvErr && upv && upv.length === 0) {
+                            exists = false;
+                        } else {
+                            exists = true;
+                        }
+                    }
+                    if (!exists) {
+                        alert('해당 이메일로 가입된 계정이 없습니다. 먼저 회원가입을 진행해주세요.');
+                        authSubmit.disabled = false;
+                        authSubmit.textContent = originalText;
+                        // 자동으로 회원가입 모드 전환
+                        isSignup = true;
+                        authTitle.textContent = '회원가입';
+                        authSubmit.textContent = '회원가입';
+                        toggleAuthMode.textContent = '로그인으로';
+                        return;
+                    }
+                } catch(_) {}
                 // 일반 로그인 (관리자 이메일이어도 일반 사용자로 처리)
                 const { data, error } = await state.supabase.auth.signInWithPassword({ email, password });
                 if (error) throw error;
@@ -272,6 +341,10 @@ function setupAuthUI() {
             }
         } catch (err) {
             alert(translateError(err) || '오류가 발생했습니다.');
+        } finally {
+            // 로딩 상태 해제 및 버튼 라벨 복구
+            authSubmit.disabled = false;
+            authSubmit.textContent = isSignup ? '회원가입' : '로그인';
         }
     });
 
@@ -436,7 +509,7 @@ function handleRoute() {
 async function onClickRequestComplete(e) {
 	const requestId = e.currentTarget.getAttribute('data-request-id');
 	if (!requestId) return;
-	if (!confirm('의뢰를 완료 처리하시겠습니까?\n\n수락한 신청자가 승인해야 최종 완료됩니다.')) return;
+	if (!(await confirmAsync('의뢰를 완료 처리하시겠습니까?\n\n수락한 신청자가 승인해야 최종 완료됩니다.'))) return;
 	try {
 		const { error } = await state.supabase
 			.from('requests')
@@ -737,7 +810,7 @@ async function renderRequests(root) {
     async function onClickRequestComplete(e) {
         const requestId = e.currentTarget.getAttribute('data-request-id');
         if (!requestId) return;
-        if (!confirm('의뢰를 완료 처리하시겠습니까?\n\n수락한 신청자가 승인해야 최종 완료됩니다.')) return;
+        if (!(await confirmAsync('의뢰를 완료 처리하시겠습니까?\n\n수락한 신청자가 승인해야 최종 완료됩니다.'))) return;
         try {
             const { error } = await state.supabase
                 .from('requests')
@@ -762,7 +835,7 @@ async function renderRequests(root) {
     async function onClickApproveComplete(e) {
         const requestId = e.currentTarget.getAttribute('data-request-id');
         if (!requestId) return;
-        if (!confirm('의뢰 완료에 동의하시겠습니까?\n\n동의 시 해당 의뢰는 완료 상태가 됩니다.')) return;
+        if (!(await confirmAsync('의뢰 완료에 동의하시겠습니까?\n\n동의 시 해당 의뢰는 완료 상태가 됩니다.'))) return;
         try {
             const { error } = await state.supabase
                 .from('requests')
@@ -864,7 +937,7 @@ async function renderRequests(root) {
             } else if (existing.status === 'pending') {
                 alert('이미 신청한 의뢰입니다.\n의뢰 작성자가 수락할 때까지 기다려주세요.');
             } else if (existing.status === 'rejected') {
-                if (confirm('거절된 의뢰입니다. 다시 신청하시겠습니까?')) {
+                if (await confirmAsync('거절된 의뢰입니다. 다시 신청하시겠습니까?')) {
                     const { error } = await state.supabase
                         .from('request_applications')
                         .update({ status: 'pending', created_at: new Date().toISOString() })
@@ -888,7 +961,7 @@ async function renderRequests(root) {
             return;
         }
         
-        if (!confirm(`"${requestTitle}" 의뢰를 받겠습니까?\n\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.`)) return;
+        if (!(await confirmAsync(`"${requestTitle}" 의뢰를 받겠습니까?\n\n의뢰 작성자가 수락하면 의뢰가 성사됩니다.`))) return;
         
         // 이벤트 타겟 안전하게 가져오기
         const applyBtn = e.currentTarget || e.target || (e.target?.closest('[data-action="apply-request"]'));
@@ -1382,7 +1455,7 @@ CREATE POLICY "Request owners can update applications" ON request_applications
                 const applicantId = e.target.getAttribute('data-applicant-id');
                 const applicantHandle = e.target.getAttribute('data-applicant-handle');
                 
-                if (!confirm(`"${escapeHtml(applicantHandle)}"님의 신청을 수락하시겠습니까?\n\n수락하면 다른 대기 중인 신청은 자동으로 거절됩니다.`)) return;
+                if (!(await confirmAsync(`"${escapeHtml(applicantHandle)}"님의 신청을 수락하시겠습니까?\n\n수락하면 다른 대기 중인 신청은 자동으로 거절됩니다.`))) return;
                 
                 const acceptBtn = e.target;
                 const originalText = acceptBtn.textContent;
@@ -1427,7 +1500,7 @@ CREATE POLICY "Request owners can update applications" ON request_applications
             btn.addEventListener('click', async (e) => {
                 const appId = e.target.getAttribute('data-app-id');
                 
-                if (!confirm('이 신청을 거절하시겠습니까?')) return;
+                if (!(await confirmAsync('이 신청을 거절하시겠습니까?'))) return;
                 
                 const rejectBtn = e.target;
                 const originalText = rejectBtn.textContent;
@@ -1551,8 +1624,8 @@ async function renderSearch(root) {
     // 전체 삭제 버튼
     const clearHistoryBtn = document.getElementById('clearHistory');
     if (clearHistoryBtn) {
-        clearHistoryBtn.addEventListener('click', () => {
-            if (confirm('검색 기록을 모두 삭제하시겠습니까?')) {
+        clearHistoryBtn.addEventListener('click', async () => {
+            if (await confirmAsync('검색 기록을 모두 삭제하시겠습니까?')) {
                 clearSearchHistory();
                 const historySection = clearHistoryBtn.closest('.spacer')?.previousElementSibling;
                 if (historySection && historySection.id !== 'searchQuery') {
@@ -2002,6 +2075,7 @@ async function renderProfile(root) {
           <button class="btn" id="openReview">리뷰 작성</button>
         </div>
       </div>
+      
     </section>
     <div class="spacer"></div>
     <div class="card">
@@ -2009,12 +2083,14 @@ async function renderProfile(root) {
       <div class="list">${(reviews || []).map(renderReviewItem).join('') || '<p class="muted">아직 리뷰가 없습니다.</p>'}</div>
     </div>
   `;
-
+  
     document.getElementById('openReview').addEventListener('click', () => {
         const id = document.getElementById('reviewTarget').value.trim();
         if (!id) return;
         openReviewDialog(id);
     });
+
+  
 
     function renderReviewItem(rv) {
         return `
@@ -2177,7 +2253,7 @@ async function renderAdmin(root) {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
                 const title = e.target.getAttribute('data-title');
-                if (!confirm(`정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)`)) return;
+                if (!(await confirmAsync(`정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)`))) return;
 
                 // 버튼 비활성화 및 로딩 표시
                 const originalText = e.target.textContent;
@@ -2276,7 +2352,7 @@ async function renderAdmin(root) {
         list.querySelectorAll('[data-admin-action="delete-comment"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
-                if (!confirm('정말 이 댓글을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)')) return;
+                if (!(await confirmAsync('정말 이 댓글을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)'))) return;
 
                 // 버튼 비활성화 및 로딩 표시
                 const originalText = e.target.textContent;
@@ -2411,7 +2487,7 @@ CREATE POLICY "Admins can view all tickets" ON tickets
         list.querySelectorAll('[data-admin-action="delete-ticket"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
-                if (!confirm('정말 이 고객센터 문의를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)')) return;
+                if (!(await confirmAsync('정말 이 고객센터 문의를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)'))) return;
 
                 const originalText = e.target.textContent;
                 e.target.disabled = true;
@@ -2541,7 +2617,7 @@ CREATE POLICY "Admins can view all reports" ON reports
         list.querySelectorAll('[data-admin-action="delete-report"]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
-                if (!confirm('정말 이 신고 내역을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)')) return;
+                if (!(await confirmAsync('정말 이 신고 내역을 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)'))) return;
 
                 const originalText = e.target.textContent;
                 e.target.disabled = true;
