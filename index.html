@@ -15,17 +15,20 @@
             <button class="hamburger" id="menuToggle" aria-label="메뉴 열기/닫기" aria-expanded="false" aria-controls="mainNav">
                 <span></span><span></span><span></span>
             </button>
+            
             <nav class="nav" id="mainNav" >
-                <a href="#/requests">의뢰 리스트</a>
-                <a href="#/new-request" data-auth="required">의뢰 작성</a>
-                <a href="#/search">사용자 검색</a>
-                <a href="#/profile" data-auth="required">프로필</a>
-                <a href="#/customer">고객센터</a>
-                <a href="#/report">신고</a>
-                <a href="#/admin" id="adminLink" data-admin="required" style="display:none">관리자</a>
-                <button id="loginBtn" class="btn btn-primary">로그인</button>
-                <button id="adminLoginBtn" class="btn" style="display:none">관리자 로그인</button>
-                <button id="logoutBtn" class="btn btn-ghost" style="display:none">로그아웃</button>
+                <div class="menu-container">
+                    <a href="#/requests">의뢰 리스트</a>
+                    <a href="#/new-request" data-auth="required">의뢰 작성</a>
+                    <a href="#/search">사용자 검색</a>
+                    <a href="#/profile" data-auth="required">프로필</a>
+                    <a href="#/customer">고객센터</a>
+                    <a href="#/report">신고</a>
+                    <a href="#/admin" id="adminLink" data-admin="required" style="display:none">관리자</a>
+                    <button id="loginBtn" class="btn btn-primary">로그인</button>
+                    <button id="adminLoginBtn" class="btn" style="display:none">관리자 로그인</button>
+                    <button id="logoutBtn" class="btn btn-ghost" style="display:none">로그아웃</button>
+                </div>
             </nav>
             <div class="nav-backdrop" id="navBackdrop" hidden></div>
         </div>

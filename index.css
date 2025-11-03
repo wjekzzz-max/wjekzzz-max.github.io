@@ -14,6 +14,7 @@ body.no-scroll{overflow:hidden}
 .nav a{color:var(--muted);text-decoration:none;padding:6px 8px;border-radius:6px;transition:all 0.2s}
 .nav a:hover{background:var(--accent);color:var(--text)}
 .nav a.active{color:var(--primary);background:var(--accent);font-weight:600}
+.nav .menu-container{display:flex;gap:12px;align-items:center}
 .btn{height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:#1a2230;color:var(--text);cursor:pointer}
 .btn:hover{background:var(--accent)}
 .btn-primary{background:var(--primary);border-color:transparent;color:#0b1020}
@@ -101,16 +102,18 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 .space{flex:1}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-/* Responsive (mobile first tweaks) */
+/* Responsive (mobile first) */
 @media(max-width:719px){
   .grid{grid-template-columns:1fr}
   .row{flex-wrap:wrap}
   .header-inner{height:auto;align-items:center;gap:8px;padding:8px 0}
   .hamburger{display:flex}
   .nav{position:fixed;top:0;left:0;bottom:0;width:260px;background:var(--panel);border-right:1px solid var(--border);padding:64px 12px 12px 12px;display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;transform:translateX(-100%);transition:transform .25s ease;z-index:1001;box-shadow:2px 0 10px rgba(0,0,0,.35)}
+  .nav .menu-container{flex-direction:column;align-items:stretch;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;gap:8px;margin:0 4px}
   .nav a,.nav .btn{padding:12px}
   .app-header.open .nav{transform:translateX(0)}
-  .nav-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.25);backdrop-filter:blur(1px);z-index:1000}
+  .app-header.open .nav{background:var(--panel)}
+  .nav-backdrop{position:fixed;inset:0;background:rgba(10, 10, 10, 0.25);backdrop-filter:blur(1px);z-index:1000}
   .app-header.open .nav-backdrop{display:block}
   .nav-backdrop[hidden]{display:none}
   .app-header.open .hamburger[aria-expanded="true"] span:nth-child(2){opacity:0}
@@ -125,4 +128,11 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
   .btn{height:40px}
   .field textarea{min-height:120px}
 }
+
+/* Desktop grid enhancements */
+@media(min-width:720px){
+  .grid.cols-2{grid-template-columns:1fr 1fr}
+  .grid.cols-3{grid-template-columns:repeat(3,1fr)}
+}
+
 
