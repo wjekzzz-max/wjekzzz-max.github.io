@@ -99,6 +99,106 @@ const ADMIN_EMAILS = [
     // 여기에 더 많은 관리자 이메일 추가 가능
 ];
 
+// 사용자 제재(정지) 유틸리티
+async function getActiveSuspensionFor(userId) {
+    if (!state.supabase || !userId) return null;
+    const nowIso = new Date().toISOString();
+    try {
+        const { data, error } = await state.supabase
+            .from('user_suspensions')
+            .select('*')
+            .eq('user_id', userId)
+            .is('revoked_at', null)
+            .gt('until_at', nowIso)
+            .order('until_at', { ascending: false })
+            .limit(1);
+        if (error) throw error;
+        return (data && data[0]) || null;
+    } catch (err) {
+        // 테이블이 없거나 권한 문제면 null 리턴하고, 실제 액션 시 안내
+        return null;
+    }
+}
+
+function msToHuman(ms) {
+    const sec = Math.max(0, Math.floor(ms / 1000));
+    if (sec < 60) return `${sec}초`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}분`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}시간`;
+    const day = Math.floor(hr / 24);
+    return `${day}일`;
+}
+
+async function enforceNotSuspended(actionLabel = '이 작업') {
+    if (!state.session?.user?.id) return;
+    const s = await getActiveSuspensionFor(state.session.user.id);
+    if (!s) return;
+    const until = new Date(s.until_at);
+    const remain = until.getTime() - Date.now();
+    const remainText = msToHuman(remain);
+    const reason = s.reason ? `\n사유: ${s.reason}` : '';
+    await swAlert(`현재 제재 상태입니다. ${actionLabel}을(를) 할 수 없습니다.\n남은 시간: ${remainText}${reason}`, { icon: 'warning' });
+    throw new Error('User is suspended');
+}
+
+async function adminSuspendUser(userId, minutes, reason) {
+    const until = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+    const payload = {
+        user_id: userId,
+        reason: reason || null,
+        until_at: until,
+        created_by: state.session?.user?.id || null,
+    };
+    const { error } = await state.supabase.from('user_suspensions').insert(payload);
+    if (error) {
+        const fullError = error.message || String(error);
+        if (fullError.includes('schema cache') || fullError.includes('Could not find') || fullError.includes('does not exist')) {
+            await swAlert(
+                '제재 테이블이 없습니다. Supabase SQL Editor에서 다음을 실행해 생성해주세요.\n\n' +
+                'CREATE TABLE IF NOT EXISTS user_suspensions (\n' +
+                '  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n' +
+                '  user_id UUID NOT NULL,\n' +
+                '  reason TEXT,\n' +
+                '  until_at TIMESTAMPTZ NOT NULL,\n' +
+                '  created_at TIMESTAMPTZ DEFAULT NOW(),\n' +
+                '  created_by UUID,\n' +
+                '  revoked_at TIMESTAMPTZ,\n' +
+                '  revoked_by UUID\n' +
+                ');\n\n' +
+                'CREATE INDEX IF NOT EXISTS idx_user_suspensions_user_until ON user_suspensions(user_id, until_at);\n' +
+                'ALTER TABLE user_suspensions ENABLE ROW LEVEL SECURITY;\n\n' +
+                '-- 읽기: 본인은 자신의 제재만, 관리자는 모두\n' +
+                'DROP POLICY IF EXISTS "Users can view own suspension" ON user_suspensions;\n' +
+                'DROP POLICY IF EXISTS "Admins can view all suspensions" ON user_suspensions;\n' +
+                'DROP POLICY IF EXISTS "Admins can insert suspensions" ON user_suspensions;\n' +
+                'DROP POLICY IF EXISTS "Admins can revoke suspensions" ON user_suspensions;\n' +
+                'CREATE POLICY "Users can view own suspension" ON user_suspensions FOR SELECT USING (user_id = auth.uid());\n' +
+                'CREATE POLICY "Admins can view all suspensions" ON user_suspensions FOR SELECT USING (auth.jwt() ->> \"email\" IN (\'wjekzzz@gmail.com\'));\n' +
+                'CREATE POLICY "Admins can insert suspensions" ON user_suspensions FOR INSERT WITH CHECK (auth.jwt() ->> \"email\" IN (\'wjekzzz@gmail.com\'));\n' +
+                'CREATE POLICY "Admins can revoke suspensions" ON user_suspensions FOR UPDATE USING (auth.jwt() ->> \"email\" IN (\'wjekzzz@gmail.com\'));',
+                { icon: 'warning' }
+            );
+        } else {
+            await swAlert('제재 등록 실패: ' + (error.hint || error.details || fullError), { icon: 'error' });
+        }
+        throw error;
+    }
+}
+
+async function adminRevokeSuspensions(userId) {
+    const { error } = await state.supabase
+        .from('user_suspensions')
+        .update({ revoked_at: new Date().toISOString(), revoked_by: state.session?.user?.id || null })
+        .eq('user_id', userId)
+        .is('revoked_at', null);
+    if (error) {
+        await swAlert('해제 실패: ' + (error.message || String(error)), { icon: 'error' });
+        throw error;
+    }
+}
+
 // 관리자 여부 확인 함수
 async function isAdmin(email) {
     if (!email) return false;
@@ -607,6 +707,116 @@ async function renderHome(root) {
       </div>
     </section>
   `;
+
+    // 사용자 제재 관리 로직
+    const suspQueryEl = document.getElementById('suspUserQuery');
+    const suspReasonEl = document.getElementById('suspReason');
+    const suspStatusEl = document.getElementById('suspStatus');
+
+    async function resolveUserByQuery(q) {
+        if (!q) return null;
+        let email = null;
+        let handle = null;
+        q = q.trim();
+        if (q.startsWith('@')) handle = q.slice(1);
+        else if (q.includes('@')) email = q;
+        else handle = q;
+        try {
+            if (email) {
+                const { data, error } = await state.supabase
+                    .from('user_profiles_view')
+                    .select('user_id, email, handle')
+                    .eq('email', email)
+                    .maybeSingle();
+                if (!error && data) return data;
+            }
+        } catch(_) {}
+        try {
+            if (handle) {
+                const { data, error } = await state.supabase
+                    .from('profiles')
+                    .select('user_id, handle')
+                    .eq('handle', handle)
+                    .maybeSingle();
+                if (!error && data) return { user_id: data.user_id, email: null, handle: data.handle };
+            }
+        } catch(_) {}
+        return null;
+    }
+
+    async function refreshSuspensionStatus() {
+        if (!suspQueryEl || !suspStatusEl) return;
+        const q = suspQueryEl.value.trim();
+        if (!q) { suspStatusEl.textContent = ''; return; }
+        const user = await resolveUserByQuery(q);
+        if (!user?.user_id) { suspStatusEl.textContent = '사용자를 찾을 수 없습니다.'; return; }
+        const active = await getActiveSuspensionFor(user.user_id);
+        if (!active) {
+            suspStatusEl.textContent = '활성 제재 없음';
+        } else {
+            const remain = new Date(active.until_at).getTime() - Date.now();
+            const remainText = msToHuman(remain);
+            suspStatusEl.textContent = `제재 중 · 남은 시간: ${remainText}${active.reason ? ` · 사유: ${active.reason}` : ''}`;
+        }
+    }
+
+    document.querySelectorAll('[data-susp-min]')?.forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const q = suspQueryEl.value.trim();
+            if (!q) { alert('사용자 식별값을 입력하세요.'); return; }
+            const user = await resolveUserByQuery(q);
+            if (!user?.user_id) { alert('사용자를 찾을 수 없습니다.'); return; }
+            const minutes = Number(btn.getAttribute('data-susp-min')) || 0;
+            const reason = suspReasonEl.value.trim();
+            try {
+                await adminSuspendUser(user.user_id, minutes, reason);
+                alert('제재가 적용되었습니다.');
+            } catch(_) {}
+            await refreshSuspensionStatus();
+        });
+    });
+
+    const suspCustomBtn = document.getElementById('suspCustomBtn');
+    const suspCustomMin = document.getElementById('suspCustomMin');
+    if (suspCustomBtn && suspCustomMin) {
+        suspCustomBtn.addEventListener('click', async () => {
+            const q = suspQueryEl.value.trim();
+            if (!q) { alert('사용자 식별값을 입력하세요.'); return; }
+            const user = await resolveUserByQuery(q);
+            if (!user?.user_id) { alert('사용자를 찾을 수 없습니다.'); return; }
+            const minutes = Number(suspCustomMin.value);
+            if (!minutes || minutes <= 0) { alert('유효한 분(minute) 값을 입력하세요.'); return; }
+            const reason = suspReasonEl.value.trim();
+            try {
+                await adminSuspendUser(user.user_id, minutes, reason);
+                alert('제재가 적용되었습니다.');
+            } catch(_) {}
+            await refreshSuspensionStatus();
+        });
+    }
+
+    const suspRevokeBtn = document.getElementById('suspRevokeBtn');
+    if (suspRevokeBtn) {
+        suspRevokeBtn.addEventListener('click', async () => {
+            const q = suspQueryEl.value.trim();
+            if (!q) { alert('사용자 식별값을 입력하세요.'); return; }
+            const user = await resolveUserByQuery(q);
+            if (!user?.user_id) { alert('사용자를 찾을 수 없습니다.'); return; }
+            if (!(await confirmAsync('해당 사용자의 활성 제재를 모두 해제하시겠습니까?'))) return;
+            try {
+                await adminRevokeSuspensions(user.user_id);
+                alert('제재가 해제되었습니다.');
+            } catch(_) {}
+            await refreshSuspensionStatus();
+        });
+    }
+
+    if (suspQueryEl) {
+        suspQueryEl.addEventListener('change', refreshSuspensionStatus);
+        suspQueryEl.addEventListener('blur', refreshSuspensionStatus);
+        setTimeout(refreshSuspensionStatus, 0);
+    }
+
     document.getElementById('goRequests').addEventListener('click', () => navigateTo('#/requests'));
 }
 
@@ -1205,6 +1415,7 @@ async function renderNewRequest(root) {
             summary,
             category,
         };
+        await enforceNotSuspended('의뢰 등록');
         const { error } = await state.supabase.from('requests').insert(payload);
         if (error) {
             alert('등록 실패: ' + translateError(error));
@@ -2174,6 +2385,7 @@ async function renderCustomer(root) {
         const title = document.getElementById('ticketTitle').value.trim();
         const body = document.getElementById('ticketBody').value.trim();
         if (!email || !title || !body) return alert('모든 항목을 입력하세요.');
+        await enforceNotSuspended('고객센터 문의 작성');
         const { error } = await state.supabase.from('tickets').insert({ email, title, body });
         if (error) return alert('등록 실패: ' + translateError(error));
         alert('문의가 접수되었습니다.');
@@ -2197,6 +2409,33 @@ async function renderAdmin(root) {
     <div class="card">
       <h3>👑 관리자 페이지</h3>
       <p class="muted">모든 의뢰, 댓글, 고객센터 문의, 신고를 관리할 수 있습니다.</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="card">
+      <h3>사용자 제재 관리</h3>
+      <div class="grid">
+        <div class="field">
+          <label>사용자 식별 (이메일 또는 핸들)</label>
+          <input id="suspUserQuery" placeholder="예: user@example.com 또는 @handle">
+        </div>
+        <div class="field">
+          <label>사유 (선택)</label>
+          <input id="suspReason" placeholder="예: 스팸, 욕설 등">
+        </div>
+      </div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn" data-susp-min="1">1분 정지</button>
+        <button class="btn" data-susp-min="10">10분 정지</button>
+        <button class="btn" data-susp-min="60">1시간 정지</button>
+        <button class="btn" data-susp-min="1440">1일 정지</button>
+        <div class="row" style="gap:6px;align-items:center">
+          <input id="suspCustomMin" type="number" min="1" style="width:120px" placeholder="분">
+          <button class="btn" id="suspCustomBtn">커스텀 정지</button>
+        </div>
+        <div style="flex:1"></div>
+        <button class="btn btn-danger" id="suspRevokeBtn">제재 해제</button>
+      </div>
+      <div class="muted" id="suspStatus" style="margin-top:8px"></div>
     </div>
     <div class="spacer"></div>
     <div class="card">
@@ -2723,6 +2962,7 @@ async function renderReport(root) {
         const target = document.getElementById('reportTarget').value.trim();
         const reason = document.getElementById('reportReason').value.trim();
         if (!target || !reason) return alert('모든 항목을 입력하세요.');
+        await enforceNotSuspended('신고 제출');
         const { error } = await state.supabase.from('reports').insert({ target, reason });
         if (error) return alert('제출 실패: ' + translateError(error));
         alert('신고가 접수되었습니다. 감사합니다.');
@@ -2800,6 +3040,7 @@ async function openMessagesDialog(receiverId, receiverHandle, requestId, request
             submitMessage.disabled = true;
             submitMessage.textContent = '전송 중...';
 
+            await enforceNotSuspended('메시지 전송');
             const { error } = await state.supabase.from('messages').insert({
                 sender_id: senderId,
                 receiver_id: receiverId,
@@ -3177,6 +3418,7 @@ async function openCommentsViewDialog(requestId, requestTitle) {
             submitComment.disabled = true;
             submitComment.textContent = '등록 중...';
 
+            await enforceNotSuspended('댓글 작성');
             const { error } = await state.supabase.from('request_comments').insert({
                 request_id: requestId,
                 user_id: state.session.user.id,
@@ -3593,6 +3835,7 @@ async function openReviewDialog(reviewedUserId) {
         reviewSubmit.disabled = true;
         reviewSubmit.textContent = '등록 중...';
 
+    await enforceNotSuspended('리뷰 등록');
     const { error } = await state.supabase.from('reviews').insert({
         reviewed_user_id: reviewedUserId,
         reviewer_user_id: state.session.user.id,
