@@ -1586,8 +1586,8 @@ async function renderSearch(root) {
       <h3>사용자 검색</h3>
       <div class="grid">
         <div class="field">
-          <label>검색어 (핸들, 이메일, 사용자 ID)</label>
-          <input id="searchQuery" placeholder="사용자 핸들이나 이메일을 입력하세요" style="width:100%">
+          <label>검색어 (이메일, 사용자 ID)</label>
+          <input id="searchQuery" placeholder="사용자 ID이나 이메일을 입력하세요" style="width:100%">
         </div>
         <div class="row" style="justify-content:flex-end">
           <button class="btn btn-primary" id="searchBtn">검색</button>

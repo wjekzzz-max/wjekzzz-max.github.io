@@ -108,7 +108,7 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
   .row{flex-wrap:wrap}
   .header-inner{height:auto;align-items:center;gap:8px;padding:8px 0}
   .hamburger{display:flex}
-  .nav{position:fixed;top:0;left:0;bottom:0;width:260px;background:var(--panel);border-right:1px solid var(--border);padding:64px 12px 12px 12px;display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;transform:translateX(-100%);transition:transform .25s ease;z-index:1001;box-shadow:2px 0 10px rgba(0,0,0,.35)}
+  .nav{position:fixed;top:0;left:0;bottom:0;width:260px;background:var(--panel);display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;transform:translateX(-100%);transition:transform .25s ease;z-index:1001;box-shadow:2px 0 10px rgba(0,0,0,.35)}
   .nav .menu-container{flex-direction:column;align-items:stretch;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;gap:8px;margin:0 4px}
   .nav a,.nav .btn{padding:12px}
   .app-header.open .nav{transform:translateX(0)}
