@@ -657,6 +657,30 @@ async function renderRequests(root) {
         
         // 배지 업데이트
         updateMessageBadges();
+
+        // 완료 승인된 의뢰는 리뷰 화면을 자동으로 띄움 (중복 방지 저장)
+        try {
+            if (state.session) {
+                const currentUserId = state.session.user.id;
+                const firstEligible = data.find((item) => {
+                    const completionState = completionByRequestId[item.id] || {};
+                    const isCompleted = !!completionState.completed;
+                    const applicationStatus = applicationStatusByRequestId[item.id];
+                    const isOwner = item.owner_user_id === currentUserId;
+                    if (!isCompleted) return false;
+                    if (isOwner) return false;
+                    if (applicationStatus !== 'accepted') return false;
+                    const key = `reviewPromptShown:${item.id}:${currentUserId}`;
+                    const shown = localStorage.getItem(key) === '1';
+                    return !shown;
+                });
+                if (firstEligible) {
+                    const key = `reviewPromptShown:${firstEligible.id}:${currentUserId}`;
+                    try { localStorage.setItem(key, '1'); } catch(_) {}
+                    openReviewDialog(firstEligible.owner_user_id);
+                }
+            }
+        } catch(_) {}
     }
 
     function renderRequestItem(item, handlesByUserId, applicationStatus, completionState = {}, hasAccepted = false) {
@@ -700,7 +724,7 @@ async function renderRequests(root) {
           ${state.session ? `<button class="btn" data-action="${isOwner ? 'view-messages' : 'send-message'}" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" data-receiver-id="${item.owner_user_id}" data-receiver-handle="${escapeHtml(handle)}">${isOwner ? '메시지 보기' : '메시지 보내기'}</button>` : ''}
           <button class="btn" data-action="view-reviews" data-user-id="${item.owner_user_id}" data-user-handle="${handle}">작성자 리뷰</button>
           ${!isOwner && state.session ? `<button class="${applyButtonClass}" data-action="apply-request" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" ${applyButtonDisabled ? 'disabled' : ''}>${applyButtonText}</button>` : ''}
-          ${!isOwner && state.session ? `<button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>` : ''}
+          ${!isOwner && state.session && isCompleted ? `<button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>` : ''}
           ${isOwner ? `<button class="btn" data-action="view-applications" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">신청자 보기</button>` : ''}
           ${isOwner && !isCompleted && hasAccepted ? `${!completionRequested ? `<button class="btn btn-primary" data-action="request-complete" data-request-id="${item.id}">의뢰 완료 요청</button>` : `<span class="muted" style="padding:6px 0">완료 승인 대기 중</span>`}` : ''}
           ${!isOwner && state.session && applicationStatus === 'accepted' && !isCompleted ? `${completionRequested ? `<button class=\"btn btn-primary\" data-action=\"approve-complete\" data-request-id=\"${item.id}\">완료 승인</button>` : `<span class=\"muted\" style=\"padding:6px 0\">작성자가 완료 요청 시 승인 가능</span>`}` : ''}
