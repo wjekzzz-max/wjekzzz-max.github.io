@@ -12,7 +12,10 @@
     <header class="app-header">
         <div class="container header-inner">
             <a href="#/" class="brand">의뢰 사이트</a>
-            <nav class="nav">
+            <button class="hamburger" id="menuToggle" aria-label="메뉴 열기/닫기" aria-expanded="false" aria-controls="mainNav">
+                <span></span><span></span><span></span>
+            </button>
+            <nav class="nav" id="mainNav">
                 <a href="#/requests">의뢰 리스트</a>
                 <a href="#/new-request" data-auth="required">의뢰 작성</a>
                 <a href="#/search">사용자 검색</a>

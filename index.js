@@ -17,6 +17,26 @@ const state = {
     messageCheckInterval: null,  // 메시지 확인 인터벌
 };
 
+// Mobile nav toggle
+document.addEventListener('DOMContentLoaded', () => {
+    const header = document.querySelector('.app-header');
+    const toggle = document.getElementById('menuToggle');
+    const nav = document.getElementById('mainNav');
+    if (toggle && header && nav) {
+        toggle.addEventListener('click', () => {
+            const isOpen = header.classList.toggle('open');
+            toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        });
+        // 닫기: 내비게이션 클릭 시 자동 닫기
+        nav.addEventListener('click', (e) => {
+            const a = e.target.closest('a,button');
+            if (!a) return;
+            header.classList.remove('open');
+            toggle.setAttribute('aria-expanded', 'false');
+        });
+    }
+});
+
 // SweetAlert2 helpers
 function swAlert(message, options = {}) {
     if (window.Swal) {
