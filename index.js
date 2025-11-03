@@ -496,6 +496,15 @@ async function renderRequests(root) {
             <option>개발</option>
             <option>번역</option>
             <option>컨설팅</option>
+            <option>마케팅</option>
+            <option>영상/사진</option>
+            <option>문서작성</option>
+            <option>교육</option>
+            <option>음악/오디오</option>
+            <option>데이터</option>
+            <option>기획</option>
+            <option>운영/관리</option>
+            <option>기타</option>
           </select>
         </div>
         <div class="field" style="min-width:160px">
@@ -577,7 +586,39 @@ async function renderRequests(root) {
             } catch(_) {}
         }
         
-        list.innerHTML = data.map((item) => renderRequestItem(item, handlesByUserId, applicationStatusByRequestId[item.id])).join('');
+        // 요청 상태(완료 요청/완료 여부) 조회
+        let completionByRequestId = {};
+        try {
+            const requestIds = data.map(d => d.id);
+            if (requestIds.length) {
+                const { data: reqStatuses } = await state.supabase
+                    .from('requests')
+                    .select('id, completion_requested, completed')
+                    .in('id', requestIds);
+                (reqStatuses || []).forEach(r => {
+                    completionByRequestId[r.id] = {
+                        completion_requested: !!r.completion_requested,
+                        completed: !!r.completed,
+                    };
+                });
+            }
+        } catch(_) {}
+
+        // 의뢰에 수락된 신청 존재 여부(작성자 전용 표시를 위해)
+        let hasAcceptedByRequestId = {};
+        try {
+            const requestIds = data.map(d => d.id);
+            if (requestIds.length) {
+                const { data: acceptedRows } = await state.supabase
+                    .from('request_applications')
+                    .select('request_id')
+                    .in('request_id', requestIds)
+                    .eq('status', 'accepted');
+                (acceptedRows || []).forEach(row => { hasAcceptedByRequestId[row.request_id] = true; });
+            }
+        } catch(_) {}
+
+        list.innerHTML = data.map((item) => renderRequestItem(item, handlesByUserId, applicationStatusByRequestId[item.id], completionByRequestId[item.id], !!hasAcceptedByRequestId[item.id])).join('');
         document.querySelectorAll('[data-action="send-message"]').forEach((btn) => btn.addEventListener('click', onClickSendMessage));
         document.querySelectorAll('[data-action="view-messages"]').forEach((btn) => btn.addEventListener('click', onClickViewMessages));
         document.querySelectorAll('[data-action="view-reviews"]').forEach((btn) => btn.addEventListener('click', onClickViewReviews));
@@ -585,12 +626,14 @@ async function renderRequests(root) {
         document.querySelectorAll('[data-action="apply-request"]').forEach((btn) => btn.addEventListener('click', onClickApplyRequest));
         document.querySelectorAll('[data-action="view-applications"]').forEach((btn) => btn.addEventListener('click', onClickViewApplications));
         document.querySelectorAll('[data-action="delete"]').forEach((btn) => btn.addEventListener('click', onClickDelete));
+        document.querySelectorAll('[data-action="request-complete"]').forEach((btn) => btn.addEventListener('click', onClickRequestComplete));
+        document.querySelectorAll('[data-action="approve-complete"]').forEach((btn) => btn.addEventListener('click', onClickApproveComplete));
         
         // 배지 업데이트
         updateMessageBadges();
     }
 
-    function renderRequestItem(item, handlesByUserId, applicationStatus) {
+    function renderRequestItem(item, handlesByUserId, applicationStatus, completionState = {}, hasAccepted = false) {
         const rating = item.avg_rating ? Number(item.avg_rating).toFixed(1) : '-';
         const isOwner = !!state.session && state.session.user.id === item.owner_user_id;
         const handle = handlesByUserId?.[item.owner_user_id] || (item.owner_user_id ? item.owner_user_id.slice(0,8) : '-');
@@ -612,6 +655,9 @@ async function renderRequests(root) {
             applyButtonClass = 'btn';
         }
         
+        const completionRequested = !!completionState.completion_requested;
+        const isCompleted = !!completionState.completed;
+
         return `
       <div class="list-item">
         <div>
@@ -621,6 +667,7 @@ async function renderRequests(root) {
             <span class="chip">${escapeHtml(item.category || '기타')}</span>
             <span class="chip"><span class="rating">★</span> ${rating}</span>
             <span class="chip">작성자: ${escapeHtml(handle)}</span>
+            ${isCompleted ? '<span class="chip" style="color:#22c55e">완료됨</span>' : ''}
           </div>
         </div>
         <div class="row">
@@ -629,10 +676,59 @@ async function renderRequests(root) {
           ${!isOwner && state.session ? `<button class="${applyButtonClass}" data-action="apply-request" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}" ${applyButtonDisabled ? 'disabled' : ''}>${applyButtonText}</button>` : ''}
           ${!isOwner && state.session ? `<button class="btn" data-action="review" data-user-id="${item.owner_user_id}">리뷰 남기기</button>` : ''}
           ${isOwner ? `<button class="btn" data-action="view-applications" data-request-id="${item.id}" data-request-title="${escapeHtml(item.title)}">신청자 보기</button>` : ''}
+          ${isOwner && !isCompleted && hasAccepted ? `${!completionRequested ? `<button class="btn btn-primary" data-action="request-complete" data-request-id="${item.id}">의뢰 완료 요청</button>` : `<span class="muted" style="padding:6px 0">완료 승인 대기 중</span>`}` : ''}
+          ${!isOwner && state.session && applicationStatus === 'accepted' && !isCompleted ? `${completionRequested ? `<button class=\"btn btn-primary\" data-action=\"approve-complete\" data-request-id=\"${item.id}\">완료 승인</button>` : `<span class=\"muted\" style=\"padding:6px 0\">작성자가 완료 요청 시 승인 가능</span>`}` : ''}
           ${isOwner || state.isAdmin ? `<button class="btn btn-danger" data-action="delete" data-id="${item.id}" data-title="${escapeHtml(item.title)}">삭제</button>` : ''}
         </div>
       </div>
     `;
+    }
+
+    async function onClickRequestComplete(e) {
+        const requestId = e.currentTarget.getAttribute('data-request-id');
+        if (!requestId) return;
+        if (!confirm('의뢰를 완료 처리하시겠습니까?\n\n수락한 신청자가 승인해야 최종 완료됩니다.')) return;
+        try {
+            const { error } = await state.supabase
+                .from('requests')
+                .update({ completion_requested: true, completion_requested_at: new Date().toISOString() })
+                .eq('id', requestId);
+            if (error) throw error;
+            alert('완료 요청을 보냈습니다. 수락자가 승인하면 완료됩니다.');
+            // 새로고침
+            navigateTo('#/requests');
+        } catch(err) {
+            const msg = String(err?.message || err);
+            if (msg.includes('column') || msg.includes('does not exist')) {
+                alert(`요청 컬럼이 없습니다. Supabase에서 다음 SQL을 실행해주세요:\n\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completion_requested BOOLEAN DEFAULT false;\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completion_requested_at TIMESTAMPTZ;\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false;\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;\n\n또한 RLS 정책에서 작성자만 completion_requested를 업데이트할 수 있도록 해야 합니다.`);
+            } else if (msg.includes('permission denied') || msg.includes('policy') || msg.includes('RLS')) {
+                alert(`권한이 없습니다. RLS 정책을 확인해주세요.\n\n예시) 작성자만 완료 요청 가능:\nCREATE POLICY "Owner can request completion" ON requests\n  FOR UPDATE USING (owner_user_id = auth.uid());`);
+            } else {
+                alert('완료 요청 실패: ' + msg);
+            }
+        }
+    }
+
+    async function onClickApproveComplete(e) {
+        const requestId = e.currentTarget.getAttribute('data-request-id');
+        if (!requestId) return;
+        if (!confirm('의뢰 완료에 동의하시겠습니까?\n\n동의 시 해당 의뢰는 완료 상태가 됩니다.')) return;
+        try {
+            const { error } = await state.supabase
+                .from('requests')
+                .update({ completed: true, completed_at: new Date().toISOString() })
+                .eq('id', requestId);
+            if (error) throw error;
+            alert('의뢰가 완료되었습니다.');
+            navigateTo('#/requests');
+        } catch(err) {
+            const msg = String(err?.message || err);
+            if (msg.includes('permission denied') || msg.includes('policy') || msg.includes('RLS')) {
+                alert(`권한이 없습니다. 수락한 신청자만 완료 승인할 수 있도록 RLS 정책을 추가하세요.\n\n예시 SQL:\n-- 수락한 신청자가 해당 의뢰의 completed를 업데이트할 수 있도록 허용\nCREATE POLICY "Accepted applicant can complete" ON requests\n  FOR UPDATE USING (\n    EXISTS (\n      SELECT 1 FROM request_applications ra\n      WHERE ra.request_id = requests.id\n      AND ra.applicant_user_id = auth.uid()\n      AND ra.status = 'accepted'\n    )\n  );`);
+            } else {
+                alert('완료 승인 실패: ' + msg);
+            }
+        }
     }
 
     function onClickSendMessage(e) {
@@ -885,7 +981,8 @@ async function renderNewRequest(root) {
       <div class="grid">
         <div class="field">
           <label>제목</label>
-          <input id="reqTitle" placeholder="예: 로고 디자인 의뢰">
+          <input id="reqTitle" placeholder="예: 로고 디자인 의뢰 (최대 200자)" maxlength="200">
+          <div class="muted" style="font-size:12px">200자 권장 · <span id="reqTitleCount">0/200</span></div>
         </div>
         <div class="field">
           <label>카테고리</label>
@@ -895,11 +992,21 @@ async function renderNewRequest(root) {
             <option>개발</option>
             <option>번역</option>
             <option>컨설팅</option>
+            <option>마케팅</option>
+            <option>영상/사진</option>
+            <option>문서작성</option>
+            <option>교육</option>
+            <option>음악/오디오</option>
+            <option>데이터</option>
+            <option>기획</option>
+            <option>운영/관리</option>
+            <option>기타</option>
           </select>
         </div>
         <div class="field">
           <label>요약</label>
-          <textarea id="reqSummary" placeholder="간단한 요구사항을 적어주세요"></textarea>
+          <textarea id="reqSummary" placeholder="간단한 요구사항을 적어주세요 (최대 500자)" maxlength="500"></textarea>
+          <div class="muted" style="font-size:12px">최대 500자 · <span id="reqSummaryCount">0/500</span></div>
         </div>
         <div class="row" style="justify-content:flex-end;gap:8px">
           <button class="btn" id="cancelNewReq">취소</button>
@@ -911,6 +1018,21 @@ async function renderNewRequest(root) {
 
     document.getElementById('cancelNewReq').addEventListener('click', () => navigateTo('#/requests'));
     document.getElementById('submitNewReq').addEventListener('click', submitNewRequest);
+
+    // 글자수 안내 (200자 권장)
+    const titleEl = document.getElementById('reqTitle');
+    const summaryEl = document.getElementById('reqSummary');
+    function updateCounts() {
+        const titleLen = (titleEl.value || '').length;
+        const summaryLen = (summaryEl.value || '').length;
+        const titleCountEl = document.getElementById('reqTitleCount');
+        const summaryCountEl = document.getElementById('reqSummaryCount');
+        if (titleCountEl) titleCountEl.textContent = `${titleLen}/200`;
+        if (summaryCountEl) summaryCountEl.textContent = `${summaryLen}/500`;
+    }
+    titleEl.addEventListener('input', updateCounts);
+    summaryEl.addEventListener('input', updateCounts);
+    updateCounts();
 
     async function submitNewRequest() {
         const title = document.getElementById('reqTitle').value.trim();
@@ -985,7 +1107,7 @@ async function renderRequestApplications(root, requestId) {
         // 의뢰 정보 가져오기
         const { data: request, error: reqErr } = await state.supabase
             .from('requests')
-            .select('id, title, owner_user_id')
+            .select('id, title, owner_user_id, completion_requested, completed')
             .eq('id', requestId)
             .maybeSingle();
 
@@ -1121,14 +1243,14 @@ CREATE POLICY "Request owners can update applications" ON request_applications
                     </div>
                 `;
             }).join('')}
-          </div>
+        </div>
         </div>
         ` : ''}
         ${acceptedApps.length > 0 ? `
         <div class="spacer"></div>
         <div class="card">
-          <h3>수락된 신청 (${acceptedApps.length})</h3>
-          <div class="list" id="acceptedApplications">
+            <h3>수락된 신청 (${acceptedApps.length})</h3>
+            <div class="list" id="acceptedApplications">
             ${acceptedApps.map(app => {
                 const handle = handlesByUserId[app.applicant_user_id] || app.applicant_user_id?.slice(0, 8) || '익명';
                 const date = new Date(app.created_at).toLocaleString('ko-KR', {
@@ -1151,14 +1273,14 @@ CREATE POLICY "Request owners can update applications" ON request_applications
                     </div>
                 `;
             }).join('')}
-          </div>
+            </div>
         </div>
         ` : ''}
         ${rejectedApps.length > 0 ? `
         <div class="spacer"></div>
         <div class="card">
-          <h3>거절된 신청 (${rejectedApps.length})</h3>
-          <div class="list" id="rejectedApplications">
+            <h3>거절된 신청 (${rejectedApps.length})</h3>
+            <div class="list" id="rejectedApplications">
             ${rejectedApps.map(app => {
                 const handle = handlesByUserId[app.applicant_user_id] || app.applicant_user_id?.slice(0, 8) || '익명';
                 const date = new Date(app.created_at).toLocaleString('ko-KR', {
@@ -1180,16 +1302,23 @@ CREATE POLICY "Request owners can update applications" ON request_applications
                     </div>
                 `;
             }).join('')}
-          </div>
+            </div>
         </div>
         ` : ''}
         ${applications.length === 0 ? `
         <div class="spacer"></div>
         <div class="card">
-          <p class="muted" style="text-align:center;padding:20px">아직 신청자가 없습니다.</p>
+            <p class="muted" style="text-align:center;padding:20px">아직 신청자가 없습니다.</p>
         </div>
         ` : ''}
-      `;
+        ${acceptedApps.length > 0 ? `
+        <div class="spacer"></div>
+        <div class="card">
+            <h3>의뢰 완료</h3>
+            ${request.completed ? `<div class="chip" style="color:#22c55e">완료됨</div>` : request.completion_requested ? `<div class="muted">완료 승인 대기 중 (수락자가 승인하면 완료)</div>` : `<button class=\"btn btn-primary\" data-action=\"request-complete\" data-request-id=\"${request.id}\">의뢰 완료 요청</button>`}
+        </div>
+        ` : ''}
+    `;
 
         // 뒤로 가기 버튼
         document.getElementById('backToRequests').addEventListener('click', () => {
@@ -1280,6 +1409,10 @@ CREATE POLICY "Request owners can update applications" ON request_applications
                 const userId = e.target.getAttribute('data-user-id');
                 navigateTo(`#/user/${userId}`);
             });
+        });
+        // 의뢰 완료 요청 버튼
+        document.querySelectorAll('[data-action="request-complete"]').forEach(btn => {
+            btn.addEventListener('click', onClickRequestComplete);
         });
     } catch (err) {
         root.innerHTML = `<div class="card"><h3>오류</h3><p class="muted">${escapeHtml(translateError(err))}</p></div>`;
