@@ -1041,15 +1041,16 @@ async function renderRequests(root) {
         const id = e.currentTarget.getAttribute('data-id');
         const title = e.currentTarget.getAttribute('data-title') || '이 의뢰';
         if (!id) return;
-        
+        // 이벤트 타겟을 먼저 확보 (await 이후 currentTarget이 null이 되는 문제 방지)
+        const deleteBtn = e.currentTarget || e.target || (e.target?.closest && e.target.closest('[data-action="delete"]'));
+        if (!deleteBtn) return;
+
         const isAdminDelete = state.isAdmin;
         const confirmMsg = isAdminDelete 
             ? `정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n(관리자 권한으로 삭제됩니다.)`
             : `정말 "${title}" 의뢰를 삭제하시겠습니까?\n\n삭제된 의뢰는 복구할 수 없습니다.`;
-        
-        if (!confirm(confirmMsg)) return;
-        
-        const deleteBtn = e.currentTarget;
+
+        if (!(await confirmAsync(confirmMsg, { icon: 'warning', confirmButtonText: '삭제', cancelButtonText: '취소' }))) return;
         const originalText = deleteBtn.textContent;
         deleteBtn.disabled = true;
         deleteBtn.textContent = '삭제 중...';
