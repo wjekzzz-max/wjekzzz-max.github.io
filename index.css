@@ -3,6 +3,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+body.no-scroll{overflow:hidden}
 .container{max-width:1080px;margin:0 auto;padding:0 16px}
 .app-header{position:sticky;top:0;background:rgba(15,18,22,.8);backdrop-filter:saturate(180%) blur(8px);border-bottom:1px solid var(--border);z-index:10}
 .header-inner{display:flex;align-items:center;justify-content:space-between;height:56px}
@@ -26,7 +27,7 @@ main#app{padding:24px 0 40px}
 /* Cards & layout */
 .grid{display:grid;gap:16px}
 @media(min-width:720px){.grid.cols-2{grid-template-columns:1fr 1fr}.grid.cols-3{grid-template-columns:repeat(3,1fr)}}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;}
 .card h3{margin:0 0 8px 0}
 .muted{color:var(--muted)}
 .row{display:flex;gap:12px;align-items:center}
@@ -106,9 +107,12 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
   .row{flex-wrap:wrap}
   .header-inner{height:auto;align-items:center;gap:8px;padding:8px 0}
   .hamburger{display:flex}
-  .nav{display:none;flex-direction:column;gap:8px;width:100%}
-  .nav a{padding:10px 12px}
-  .app-header.open .nav{display:flex}
+  .nav{position:fixed;top:0;left:0;bottom:0;width:260px;background:var(--panel);border-right:1px solid var(--border);padding:64px 12px 12px 12px;display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;transform:translateX(-100%);transition:transform .25s ease;z-index:1001;box-shadow:2px 0 10px rgba(0,0,0,.35)}
+  .nav a,.nav .btn{padding:12px}
+  .app-header.open .nav{transform:translateX(0)}
+  .nav-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.25);backdrop-filter:blur(1px);z-index:1000}
+  .app-header.open .nav-backdrop{display:block}
+  .nav-backdrop[hidden]{display:none}
   .app-header.open .hamburger[aria-expanded="true"] span:nth-child(2){opacity:0}
   .app-header.open .hamburger[aria-expanded="true"] span:nth-child(1){transform:translateY(6px) rotate(45deg)}
   .app-header.open .hamburger[aria-expanded="true"] span:nth-child(3){transform:translateY(-6px) rotate(-45deg)}

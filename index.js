@@ -22,10 +22,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const header = document.querySelector('.app-header');
     const toggle = document.getElementById('menuToggle');
     const nav = document.getElementById('mainNav');
+    const backdrop = document.getElementById('navBackdrop');
     if (toggle && header && nav) {
         toggle.addEventListener('click', () => {
             const isOpen = header.classList.toggle('open');
             toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            if (backdrop) backdrop.hidden = !isOpen;
+            document.body.classList.toggle('no-scroll', isOpen);
         });
         // 닫기: 내비게이션 클릭 시 자동 닫기
         nav.addEventListener('click', (e) => {
@@ -33,7 +36,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!a) return;
             header.classList.remove('open');
             toggle.setAttribute('aria-expanded', 'false');
+            if (backdrop) backdrop.hidden = true;
+            document.body.classList.remove('no-scroll');
         });
+        if (backdrop) {
+            backdrop.addEventListener('click', () => {
+                header.classList.remove('open');
+                toggle.setAttribute('aria-expanded', 'false');
+                backdrop.hidden = true;
+                document.body.classList.remove('no-scroll');
+            });
+        }
     }
 });
 
