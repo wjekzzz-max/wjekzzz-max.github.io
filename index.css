@@ -7,7 +7,8 @@ body.no-scroll{overflow:hidden}
 .container{max-width:1080px;margin:0 auto;padding:0 16px}
 .app-header{position:sticky;top:0;background:rgba(15,18,22,.8);backdrop-filter:saturate(180%) blur(8px);border-bottom:1px solid var(--border);z-index:10}
 .header-inner{display:flex;align-items:center;justify-content:space-between;height:56px}
-.brand{color:var(--text);text-decoration:none;font-weight:700;padding:6px 8px;border-radius:6px;transition:all 0.2s}
+.brand{color:var(--text);text-decoration:none;font-weight:700;padding:6px 8px;border-radius:6px;transition:all 0.2s;display:inline-flex;align-items:center;gap:8px}
+.brand-logo{height:24px;width:auto;display:block;vertical-align:middle}
 .brand.active{color:var(--primary)}
 .brand:hover{color:var(--primary)}
 .nav{display:flex;gap:12px;align-items:center}
@@ -108,6 +109,7 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
   .row{flex-wrap:wrap}
   .header-inner{height:auto;align-items:center;gap:8px;padding:8px 0}
   .hamburger{display:flex}
+  .brand-logo{height:20px}
   .nav{position:fixed;top:0;left:0;bottom:0;width:260px;background:var(--panel);display:flex;flex-direction:column;gap:8px;align-items:stretch;text-align:left;transform:translateX(-100%);transition:transform .25s ease;z-index:1001;box-shadow:2px 0 10px rgba(0,0,0,.35)}
   .nav .menu-container{flex-direction:column;align-items:stretch;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;gap:8px;margin:0 4px}
   .nav a,.nav .btn{padding:12px}
@@ -136,3 +138,10 @@ dialog::backdrop{background:rgba(0,0,0,.55)}
 }
 
 
+/* Make images fill their container and crop gracefully when needed */
+img{
+
+  width:110px;
+  height:110px; /* container must have a height for this to fully fill */
+
+}
