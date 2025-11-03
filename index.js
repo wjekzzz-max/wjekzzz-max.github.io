@@ -432,6 +432,32 @@ function handleRoute() {
     });
 }
 
+// 전역: 의뢰 완료 요청 핸들러 (여러 페이지에서 사용)
+async function onClickRequestComplete(e) {
+	const requestId = e.currentTarget.getAttribute('data-request-id');
+	if (!requestId) return;
+	if (!confirm('의뢰를 완료 처리하시겠습니까?\n\n수락한 신청자가 승인해야 최종 완료됩니다.')) return;
+	try {
+		const { error } = await state.supabase
+			.from('requests')
+			.update({ completion_requested: true, completion_requested_at: new Date().toISOString() })
+			.eq('id', requestId);
+		if (error) throw error;
+		alert('완료 요청을 보냈습니다. 수락자가 승인하면 완료됩니다.');
+		// 새로고침
+		navigateTo('#/requests');
+	} catch(err) {
+		const msg = String(err?.message || err);
+		if (msg.includes('column') || msg.includes('does not exist')) {
+			alert(`요청 컬럼이 없습니다. Supabase에서 다음 SQL을 실행해주세요:\n\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completion_requested BOOLEAN DEFAULT false;\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completion_requested_at TIMESTAMPTZ;\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT false;\nALTER TABLE requests ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;\n\n또한 RLS 정책에서 작성자만 completion_requested를 업데이트할 수 있도록 해야 합니다.`);
+		} else if (msg.includes('permission denied') || msg.includes('policy') || msg.includes('RLS')) {
+			alert(`권한이 없습니다. RLS 정책을 확인해주세요.\n\n예시) 작성자만 완료 요청 가능:\nCREATE POLICY "Owner can request completion" ON requests\n  FOR UPDATE USING (owner_user_id = auth.uid());`);
+		} else {
+			alert('완료 요청 실패: ' + msg);
+		}
+	}
+}
+
 function updateActiveNav(hash) {
     // 모든 네비게이션 링크에서 active 클래스 제거
     document.querySelectorAll('.nav a').forEach(link => {
